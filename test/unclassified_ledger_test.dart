@@ -198,7 +198,7 @@ void main() {
       tx,
       userResourceId: 'food',
     );
-    final original = before.single;
+    final original = before.ledger.single;
 
     final after = await pipeline.reclassify(
       transaction: tx,
