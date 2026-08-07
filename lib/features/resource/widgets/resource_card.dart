@@ -1,16 +1,17 @@
 import 'package:flutter/material.dart';
-
-import '../../transaction/transaction.dart';
+import '../../analytics/ledger_analytics.dart';
+import '../../ledger/ledger_calculator.dart';
+import '../../ledger/ledger_entry.dart';
 import '../resource.dart';
 
 class ResourceCard extends StatelessWidget {
   final Resource resource;
-  final List<TokenTransaction> transactions;
+  final List<LedgerEntry> ledger;
 
   const ResourceCard({
     super.key,
     required this.resource,
-    this.transactions = const [],
+    required this.ledger,
   });
 
   static const _colors = <String, Color>{
@@ -24,17 +25,14 @@ class ResourceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const calculator = LedgerCalculator();
+    const analytics = LedgerAnalytics();
     final color = _colors[resource.colorKey] ?? Colors.teal;
-    final negative = resource.balance.isNegative;
-    final todayTransactions = transactions.where(
-      (transaction) =>
-          transaction.resourceId == resource.id &&
-          _isSameDay(transaction.createdAt, DateTime.now()),
-    );
-
-    final todaySpent = todayTransactions.fold(
-      BigInt.zero,
-      (sum, transaction) => sum + transaction.tokenAmount.minorUnits,
+    final balance = calculator.balanceForResource(resource.id, ledger);
+    final todaySpent = analytics.spentForResourceOnDay(
+      resourceId: resource.id,
+      day: DateTime.now(),
+      ledger: ledger,
     );
 
     return Card(
@@ -55,22 +53,19 @@ class ResourceCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(resource.name,
-                      style: Theme.of(context).textTheme.titleLarge),
+                  Text(resource.name, style: Theme.of(context).textTheme.titleLarge),
                   const SizedBox(height: 6),
                   Text(
-                    '${resource.balance.toDisplayString()} TOKEN',
+                    '${balance.toDisplayString()} TOKEN',
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          color: negative
+                          color: balance.isNegative
                               ? Theme.of(context).colorScheme.error
                               : null,
                         ),
                   ),
-                  if (todaySpent != BigInt.zero) ...[
+                  if (!todaySpent.isZero) ...[
                     const SizedBox(height: 6),
-                    Text(
-                      '오늘 소비 ${_formatMinorUnits(todaySpent)} TOKEN',
-                    ),
+                    Text('오늘 소비 ${todaySpent.toDisplayString()} TOKEN'),
                   ],
                 ],
               ),
@@ -80,18 +75,4 @@ class ResourceCard extends StatelessWidget {
       ),
     );
   }
-}
-
-bool _isSameDay(DateTime a, DateTime b) =>
-    a.year == b.year && a.month == b.month && a.day == b.day;
-
-String _formatMinorUnits(BigInt minorUnits) {
-  final negative = minorUnits.isNegative;
-  final abs = minorUnits.abs();
-  final whole = abs ~/ BigInt.from(100);
-  final fraction = (abs % BigInt.from(100)).toString().padLeft(2, '0');
-  var text = '${negative ? '-' : ''}$whole.$fraction';
-  if (text.endsWith('.00')) return text.substring(0, text.length - 3);
-  if (text.endsWith('0')) return text.substring(0, text.length - 1);
-  return text;
 }
