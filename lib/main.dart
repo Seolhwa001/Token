@@ -1,14 +1,22 @@
 import 'package:flutter/material.dart';
 
 import 'core/exchange_rate.dart';
+import 'features/classification/classification_repository.dart';
+import 'features/classification/rule_engine.dart';
 import 'features/home/home_page.dart';
+import 'features/ledger/ledger_entry.dart';
+import 'features/ledger/ledger_repository.dart';
+import 'features/migration/pipeline_migration.dart';
 import 'features/period/management_period.dart';
 import 'features/period/period_repository.dart';
 import 'features/period/period_setup_page.dart';
 import 'features/resource/resource.dart';
+import 'features/resource/resource_creation.dart';
 import 'features/resource/resource_repository.dart';
-import 'features/transaction/transaction.dart';
+import 'features/transaction/lifecycle_repository.dart';
+import 'features/transaction/transaction_pipeline.dart';
 import 'features/transaction/transaction_repository.dart';
+import 'features/transaction/transaction_submission.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -23,17 +31,27 @@ class TokenApp extends StatefulWidget {
 }
 
 class _TokenAppState extends State<TokenApp> {
-  final PeriodRepository _periodRepository = PeriodRepository();
-  final ResourceRepository _resourceRepository = ResourceRepository();
-  final TransactionRepository _transactionRepository =
-      TransactionRepository();
+  final _periodRepository = PeriodRepository();
+  final _resourceRepository = ResourceRepository();
+  final _ledgerRepository = LedgerRepository();
+  final _transactionRepository = TransactionRepository();
+  final _classificationRepository = ClassificationRepository();
+  final _lifecycleRepository = LifecycleRepository();
 
   final ExchangeRate _exchangeRate = ExchangeRate.fromInt(100);
 
   ManagementPeriod? _activePeriod;
   List<Resource> _resources = const [];
-  List<TokenTransaction> _transactions = const [];
+  List<LedgerEntry> _ledger = const [];
   bool _loading = true;
+
+  late final TransactionPipeline _pipeline = TransactionPipeline(
+    transactionRepository: _transactionRepository,
+    classificationRepository: _classificationRepository,
+    ledgerRepository: _ledgerRepository,
+    lifecycleRepository: _lifecycleRepository,
+    ruleEngine: const RuleEngine(),
+  );
 
   @override
   void initState() {
@@ -42,15 +60,16 @@ class _TokenAppState extends State<TokenApp> {
   }
 
   Future<void> _load() async {
+    await PipelineMigration().runIfNeeded();
     final period = await _periodRepository.loadActivePeriod();
     final resources = await _resourceRepository.loadAll();
-    final transactions = await _transactionRepository.loadAll();
+    final ledger = await _ledgerRepository.loadAll();
 
     if (!mounted) return;
     setState(() {
       _activePeriod = period;
       _resources = resources;
-      _transactions = transactions;
+      _ledger = ledger;
       _loading = false;
     });
   }
@@ -61,40 +80,37 @@ class _TokenAppState extends State<TokenApp> {
     setState(() => _activePeriod = period);
   }
 
-  Future<void> _createResource(Resource resource) async {
-    final updated = await _resourceRepository.add(resource);
+  Future<void> _createResource(ResourceCreation creation) async {
+    final resources = await _resourceRepository.add(creation.resource);
+
+    if (!creation.initialAmount.isZero) {
+      await _ledgerRepository.append(
+        LedgerEntry(
+          id: '${DateTime.now().microsecondsSinceEpoch}-initial-grant',
+          resourceId: creation.resource.id,
+          amount: creation.initialAmount,
+          type: LedgerEntryType.initialGrant,
+          description: '직접 지급',
+          createdAt: DateTime.now(),
+        ),
+      );
+    }
+
+    final ledger = await _ledgerRepository.loadAll();
     if (!mounted) return;
-    setState(() => _resources = updated);
+    setState(() {
+      _resources = resources;
+      _ledger = ledger;
+    });
   }
 
-  Future<void> _createTransaction(TokenTransaction transaction) async {
-    final resourceIndex = _resources.indexWhere(
-      (resource) => resource.id == transaction.resourceId,
+  Future<void> _createTransaction(TransactionSubmission submission) async {
+    final result = await _pipeline.submit(
+      submission.transaction,
+      userResourceId: submission.userResourceId,
     );
-    if (resourceIndex < 0) {
-      throw StateError('Selected resource no longer exists.');
-    }
-
-    final oldResource = _resources[resourceIndex];
-    final updatedResource = oldResource.copyWith(
-      balance: oldResource.balance - transaction.tokenAmount,
-    );
-
-    final updatedResources = await _resourceRepository.replace(updatedResource);
-
-    try {
-      final updatedTransactions =
-          await _transactionRepository.add(transaction);
-
-      if (!mounted) return;
-      setState(() {
-        _resources = updatedResources;
-        _transactions = updatedTransactions;
-      });
-    } catch (_) {
-      await _resourceRepository.replace(oldResource);
-      rethrow;
-    }
+    if (!mounted) return;
+    setState(() => _ledger = result.ledger);
   }
 
   @override
@@ -107,28 +123,17 @@ class _TokenAppState extends State<TokenApp> {
         useMaterial3: true,
       ),
       home: _loading
-          ? const _LoadingPage()
+          ? const Scaffold(body: Center(child: CircularProgressIndicator()))
           : _activePeriod == null
               ? PeriodSetupPage(onCreate: _createPeriod)
               : HomePage(
                   activePeriod: _activePeriod!,
                   resources: _resources,
-                  transactions: _transactions,
+                  ledger: _ledger,
                   exchangeRate: _exchangeRate,
                   onCreateResource: _createResource,
                   onCreateTransaction: _createTransaction,
                 ),
-    );
-  }
-}
-
-class _LoadingPage extends StatelessWidget {
-  const _LoadingPage();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(child: CircularProgressIndicator()),
     );
   }
 }
