@@ -2,6 +2,7 @@ import '../../core/token_amount.dart';
 import '../classification/classification.dart';
 import '../classification/classification_repository.dart';
 import '../classification/rule_engine.dart';
+import '../classification/rule_repository.dart';
 import '../ledger/ledger_entry.dart';
 import '../ledger/ledger_repository.dart';
 import 'lifecycle_event.dart';
@@ -25,6 +26,7 @@ class TransactionPipeline {
   final LedgerRepository ledgerRepository;
   final LifecycleRepository lifecycleRepository;
   final RuleEngine ruleEngine;
+  final RuleRepository? ruleRepository;
 
   const TransactionPipeline({
     required this.transactionRepository,
@@ -32,6 +34,7 @@ class TransactionPipeline {
     required this.ledgerRepository,
     required this.lifecycleRepository,
     required this.ruleEngine,
+    this.ruleRepository,
   });
 
   Future<PipelineResult> submit(
@@ -39,11 +42,16 @@ class TransactionPipeline {
     String? userResourceId,
   }) async {
     await transactionRepository.append(transaction);
-    await _lifecycle(transaction.id, TransactionLifecycleState.newTransaction);
+    await _lifecycle(
+      transaction.id,
+      TransactionLifecycleState.newTransaction,
+    );
 
     final ClassificationResult classification;
+
     if (userResourceId != null) {
       final now = DateTime.now();
+
       classification = ClassificationResult(
         id: '${now.microsecondsSinceEpoch}-user-classification',
         transactionId: transaction.id,
@@ -52,7 +60,17 @@ class TransactionPipeline {
         createdAt: now,
       );
     } else {
-      classification = ruleEngine.classify(transaction);
+      final repository = ruleRepository;
+
+      if (repository == null) {
+        classification = ruleEngine.classify(transaction);
+      } else {
+        final rules = await repository.listEnabled();
+        classification = ruleEngine.classifyWithRules(
+          transaction,
+          rules,
+        );
+      }
     }
 
     await classificationRepository.append(classification);
@@ -70,6 +88,7 @@ class TransactionPipeline {
       );
 
       final ledger = await ledgerRepository.append(entry);
+
       await _lifecycle(
         transaction.id,
         TransactionLifecycleState.ledgerCreated,
@@ -85,7 +104,10 @@ class TransactionPipeline {
       );
     }
 
-    await _lifecycle(transaction.id, TransactionLifecycleState.classified);
+    await _lifecycle(
+      transaction.id,
+      TransactionLifecycleState.classified,
+    );
 
     final entry = LedgerEntry(
       id: '${DateTime.now().microsecondsSinceEpoch}-purchase',
@@ -100,11 +122,15 @@ class TransactionPipeline {
     );
 
     final ledger = await ledgerRepository.append(entry);
+
     await _lifecycle(
       transaction.id,
       TransactionLifecycleState.ledgerCreated,
     );
-    await _lifecycle(transaction.id, TransactionLifecycleState.analyzed);
+    await _lifecycle(
+      transaction.id,
+      TransactionLifecycleState.analyzed,
+    );
 
     return PipelineResult(
       classification: classification,
@@ -117,6 +143,7 @@ class TransactionPipeline {
     required String resourceId,
   }) async {
     final ledger = await ledgerRepository.loadAll();
+
     final unclassifiedDebit = _latestEffectiveDebit(
       transactionId: transaction.id,
       ledger: ledger,
@@ -169,14 +196,21 @@ class TransactionPipeline {
       [unclassifiedReverse, resourceEntry],
     );
 
-    await _lifecycle(transaction.id, TransactionLifecycleState.classified);
-    await _lifecycle(transaction.id, TransactionLifecycleState.reclassified);
+    await _lifecycle(
+      transaction.id,
+      TransactionLifecycleState.classified,
+    );
+    await _lifecycle(
+      transaction.id,
+      TransactionLifecycleState.reclassified,
+    );
 
     return updated;
   }
 
   Future<List<LedgerEntry>> refund(TokenTransaction transaction) async {
     final ledger = await ledgerRepository.loadAll();
+
     final effective = _latestEffectiveDebit(
       transactionId: transaction.id,
       ledger: ledger,
@@ -187,6 +221,7 @@ class TransactionPipeline {
     }
 
     final now = DateTime.now();
+
     final refund = LedgerEntry(
       id: '${now.microsecondsSinceEpoch}-refund',
       ledgerType: effective.ledgerType,
@@ -202,7 +237,12 @@ class TransactionPipeline {
     );
 
     final updated = await ledgerRepository.append(refund);
-    await _lifecycle(transaction.id, TransactionLifecycleState.refunded);
+
+    await _lifecycle(
+      transaction.id,
+      TransactionLifecycleState.refunded,
+    );
+
     return updated;
   }
 
@@ -211,6 +251,7 @@ class TransactionPipeline {
     required String newResourceId,
   }) async {
     final ledger = await ledgerRepository.loadAll();
+
     final effective = _latestEffectiveDebit(
       transactionId: transaction.id,
       ledger: ledger,
@@ -229,7 +270,9 @@ class TransactionPipeline {
 
     if (effective.ledgerType != LedgerType.resource ||
         effective.resourceId == null) {
-      throw StateError('SYSTEM Ledger cannot be Resource-reclassified.');
+      throw StateError(
+        'SYSTEM Ledger cannot be Resource-reclassified.',
+      );
     }
 
     final now = DateTime.now();
@@ -272,7 +315,12 @@ class TransactionPipeline {
     final updated = await ledgerRepository.appendAll(
       [reversal, replacement],
     );
-    await _lifecycle(transaction.id, TransactionLifecycleState.reclassified);
+
+    await _lifecycle(
+      transaction.id,
+      TransactionLifecycleState.reclassified,
+    );
+
     return updated;
   }
 
@@ -284,6 +332,7 @@ class TransactionPipeline {
     final candidates = ledger.where((entry) {
       if (entry.transactionId != transactionId) return false;
       if (!entry.amount.isNegative) return false;
+
       if (requiredLedgerType != null &&
           entry.ledgerType != requiredLedgerType) {
         return false;
@@ -297,6 +346,7 @@ class TransactionPipeline {
       final reversed = ledger.any(
         (entry) => entry.reversesLedgerEntryId == candidate.id,
       );
+
       if (!reversed) return candidate;
     }
 
@@ -308,6 +358,7 @@ class TransactionPipeline {
     TransactionLifecycleState state,
   ) {
     final now = DateTime.now();
+
     return lifecycleRepository.append(
       TransactionLifecycleEvent(
         id: '${now.microsecondsSinceEpoch}-${state.name}',
