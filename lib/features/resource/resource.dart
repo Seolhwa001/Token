@@ -15,15 +15,27 @@ class Resource {
     required this.createdAt,
   });
 
-  Map<String, Object?> toJson() {
-    return {
-      'id': id,
-      'name': name,
-      'balance': balance.toStorageString(),
-      'colorKey': colorKey,
-      'createdAt': createdAt.toIso8601String(),
-    };
+  Resource copyWith({
+    String? name,
+    TokenAmount? balance,
+    String? colorKey,
+  }) {
+    return Resource(
+      id: id,
+      name: name ?? this.name,
+      balance: balance ?? this.balance,
+      colorKey: colorKey ?? this.colorKey,
+      createdAt: createdAt,
+    );
   }
+
+  Map<String, Object?> toJson() => {
+        'id': id,
+        'name': name,
+        'balance': balance.toStorageString(),
+        'colorKey': colorKey,
+        'createdAt': createdAt.toIso8601String(),
+      };
 
   factory Resource.fromJson(Map<String, Object?> json) {
     return Resource(
