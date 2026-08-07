@@ -1,14 +1,47 @@
 import 'package:flutter/material.dart';
 
-import 'core/exchange_rate.dart';
-import 'core/token_converter.dart';
+import 'features/home/home_page.dart';
+import 'features/period/management_period.dart';
+import 'features/period/period_repository.dart';
+import 'features/period/period_setup_page.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const TokenApp());
 }
 
-class TokenApp extends StatelessWidget {
+class TokenApp extends StatefulWidget {
   const TokenApp({super.key});
+
+  @override
+  State<TokenApp> createState() => _TokenAppState();
+}
+
+class _TokenAppState extends State<TokenApp> {
+  final PeriodRepository _periodRepository = PeriodRepository();
+  ManagementPeriod? _activePeriod;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final period = await _periodRepository.loadActivePeriod();
+    if (!mounted) return;
+    setState(() {
+      _activePeriod = period;
+      _loading = false;
+    });
+  }
+
+  Future<void> _createPeriod(ManagementPeriod period) async {
+    await _periodRepository.saveActivePeriod(period);
+    if (!mounted) return;
+    setState(() => _activePeriod = period);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -19,44 +52,22 @@ class TokenApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
         useMaterial3: true,
       ),
-      home: const TokenHomePage(),
+      home: _loading
+          ? const _LoadingPage()
+          : _activePeriod == null
+              ? PeriodSetupPage(onCreate: _createPeriod)
+              : HomePage(activePeriod: _activePeriod!),
     );
   }
 }
 
-class TokenHomePage extends StatelessWidget {
-  const TokenHomePage({super.key});
+class _LoadingPage extends StatelessWidget {
+  const _LoadingPage();
 
   @override
   Widget build(BuildContext context) {
-    final sample = wonToToken(
-      won: BigInt.from(13855),
-      exchangeRate: ExchangeRate.fromInt(100),
-    );
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('TOKEN')),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '내가 사용할 수 있는 자원',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 16),
-            Card(
-              child: ListTile(
-                title: const Text('Core build check'),
-                subtitle: Text('13,855원 / 100원 = ${sample.toDisplayString()} TOKEN'),
-              ),
-            ),
-            const SizedBox(height: 12),
-            const Text('현재 단계: TOKEN Core 초기 골격'),
-          ],
-        ),
-      ),
+    return const Scaffold(
+      body: Center(child: CircularProgressIndicator()),
     );
   }
 }
