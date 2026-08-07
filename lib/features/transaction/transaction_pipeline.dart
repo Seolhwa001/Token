@@ -58,9 +58,30 @@ class TransactionPipeline {
     await classificationRepository.append(classification);
 
     if (!classification.isClassified) {
+      final entry = LedgerEntry(
+        id: '${DateTime.now().microsecondsSinceEpoch}-unclassified',
+        ledgerType: LedgerType.unclassified,
+        amount: -transaction.tokenAmount,
+        type: LedgerEntryType.purchase,
+        description:
+            transaction.merchant.isEmpty ? '미분류 거래' : transaction.merchant,
+        transactionId: transaction.id,
+        createdAt: transaction.occurredAt,
+      );
+
+      final ledger = await ledgerRepository.append(entry);
+      await _lifecycle(
+        transaction.id,
+        TransactionLifecycleState.ledgerCreated,
+      );
+      await _lifecycle(
+        transaction.id,
+        TransactionLifecycleState.analyzed,
+      );
+
       return PipelineResult(
         classification: classification,
-        ledger: await ledgerRepository.loadAll(),
+        ledger: ledger,
       );
     }
 
@@ -68,26 +89,48 @@ class TransactionPipeline {
 
     final entry = LedgerEntry(
       id: '${DateTime.now().microsecondsSinceEpoch}-purchase',
+      ledgerType: LedgerType.resource,
       resourceId: classification.resourceId!,
       amount: -transaction.tokenAmount,
       type: LedgerEntryType.purchase,
-      description: transaction.merchant.isEmpty ? '거래' : transaction.merchant,
+      description:
+          transaction.merchant.isEmpty ? '거래' : transaction.merchant,
       transactionId: transaction.id,
       createdAt: transaction.occurredAt,
     );
 
     final ledger = await ledgerRepository.append(entry);
-    await _lifecycle(transaction.id, TransactionLifecycleState.ledgerCreated);
+    await _lifecycle(
+      transaction.id,
+      TransactionLifecycleState.ledgerCreated,
+    );
     await _lifecycle(transaction.id, TransactionLifecycleState.analyzed);
 
-    return PipelineResult(classification: classification, ledger: ledger);
+    return PipelineResult(
+      classification: classification,
+      ledger: ledger,
+    );
   }
 
   Future<List<LedgerEntry>> classifyPending({
     required TokenTransaction transaction,
     required String resourceId,
   }) async {
+    final ledger = await ledgerRepository.loadAll();
+    final unclassifiedDebit = _latestEffectiveDebit(
+      transactionId: transaction.id,
+      ledger: ledger,
+      requiredLedgerType: LedgerType.unclassified,
+    );
+
+    if (unclassifiedDebit == null) {
+      throw StateError(
+        'UNCLASSIFIED Ledger entry not found for transaction.',
+      );
+    }
+
     final now = DateTime.now();
+
     await classificationRepository.append(
       ClassificationResult(
         id: '${now.microsecondsSinceEpoch}-pending-classification',
@@ -97,43 +140,68 @@ class TransactionPipeline {
         createdAt: now,
       ),
     );
-    await _lifecycle(transaction.id, TransactionLifecycleState.classified);
 
-    final ledger = await ledgerRepository.append(
-      LedgerEntry(
-        id: '${now.microsecondsSinceEpoch}-purchase',
-        resourceId: resourceId,
-        amount: -transaction.tokenAmount,
-        type: LedgerEntryType.purchase,
-        description: transaction.merchant.isEmpty ? '거래' : transaction.merchant,
-        transactionId: transaction.id,
-        createdAt: transaction.occurredAt,
+    final unclassifiedReverse = LedgerEntry(
+      id: '${now.microsecondsSinceEpoch}-unclassified-reversal',
+      ledgerType: LedgerType.unclassified,
+      amount: TokenAmount.fromMinorUnits(
+        unclassifiedDebit.amount.minorUnits.abs(),
       ),
+      type: LedgerEntryType.reversal,
+      description: '분류 처리 역분개 · ${unclassifiedDebit.description}',
+      transactionId: transaction.id,
+      reversesLedgerEntryId: unclassifiedDebit.id,
+      createdAt: now,
     );
-    await _lifecycle(transaction.id, TransactionLifecycleState.ledgerCreated);
-    return ledger;
+
+    final resourceEntry = LedgerEntry(
+      id: '${now.microsecondsSinceEpoch}-resource-classification',
+      ledgerType: LedgerType.resource,
+      resourceId: resourceId,
+      amount: -transaction.tokenAmount,
+      type: LedgerEntryType.reclassification,
+      description: unclassifiedDebit.description,
+      transactionId: transaction.id,
+      createdAt: now,
+    );
+
+    final updated = await ledgerRepository.appendAll(
+      [unclassifiedReverse, resourceEntry],
+    );
+
+    await _lifecycle(transaction.id, TransactionLifecycleState.classified);
+    await _lifecycle(transaction.id, TransactionLifecycleState.reclassified);
+
+    return updated;
   }
 
   Future<List<LedgerEntry>> refund(TokenTransaction transaction) async {
     final ledger = await ledgerRepository.loadAll();
-    final effective = _latestDebitForTransaction(transaction.id, ledger);
+    final effective = _latestEffectiveDebit(
+      transactionId: transaction.id,
+      ledger: ledger,
+    );
+
     if (effective == null) {
       throw StateError('Refund target Ledger entry not found.');
     }
 
     final now = DateTime.now();
-    final updated = await ledgerRepository.append(
-      LedgerEntry(
-        id: '${now.microsecondsSinceEpoch}-refund',
-        resourceId: effective.resourceId,
-        amount: TokenAmount.fromMinorUnits(effective.amount.minorUnits.abs()),
-        type: LedgerEntryType.refund,
-        description: '환불 · ${effective.description}',
-        transactionId: transaction.id,
-        reversesLedgerEntryId: effective.id,
-        createdAt: now,
+    final refund = LedgerEntry(
+      id: '${now.microsecondsSinceEpoch}-refund',
+      ledgerType: effective.ledgerType,
+      resourceId: effective.resourceId,
+      amount: TokenAmount.fromMinorUnits(
+        effective.amount.minorUnits.abs(),
       ),
+      type: LedgerEntryType.refund,
+      description: '환불 · ${effective.description}',
+      transactionId: transaction.id,
+      reversesLedgerEntryId: effective.id,
+      createdAt: now,
     );
+
+    final updated = await ledgerRepository.append(refund);
     await _lifecycle(transaction.id, TransactionLifecycleState.refunded);
     return updated;
   }
@@ -143,24 +211,46 @@ class TransactionPipeline {
     required String newResourceId,
   }) async {
     final ledger = await ledgerRepository.loadAll();
-    final effective = _latestDebitForTransaction(transaction.id, ledger);
+    final effective = _latestEffectiveDebit(
+      transactionId: transaction.id,
+      ledger: ledger,
+    );
+
     if (effective == null) {
       throw StateError('Reclassification target Ledger entry not found.');
     }
 
+    if (effective.ledgerType == LedgerType.unclassified) {
+      return classifyPending(
+        transaction: transaction,
+        resourceId: newResourceId,
+      );
+    }
+
+    if (effective.ledgerType != LedgerType.resource ||
+        effective.resourceId == null) {
+      throw StateError('SYSTEM Ledger cannot be Resource-reclassified.');
+    }
+
     final now = DateTime.now();
+
     final reversal = LedgerEntry(
       id: '${now.microsecondsSinceEpoch}-reversal',
+      ledgerType: LedgerType.resource,
       resourceId: effective.resourceId,
-      amount: TokenAmount.fromMinorUnits(effective.amount.minorUnits.abs()),
+      amount: TokenAmount.fromMinorUnits(
+        effective.amount.minorUnits.abs(),
+      ),
       type: LedgerEntryType.reversal,
       description: '재분류 역분개 · ${effective.description}',
       transactionId: transaction.id,
       reversesLedgerEntryId: effective.id,
       createdAt: now,
     );
+
     final replacement = LedgerEntry(
       id: '${now.microsecondsSinceEpoch}-reclassification',
+      ledgerType: LedgerType.resource,
       resourceId: newResourceId,
       amount: -transaction.tokenAmount,
       type: LedgerEntryType.reclassification,
@@ -179,22 +269,38 @@ class TransactionPipeline {
       ),
     );
 
-    final updated = await ledgerRepository.appendAll([reversal, replacement]);
+    final updated = await ledgerRepository.appendAll(
+      [reversal, replacement],
+    );
     await _lifecycle(transaction.id, TransactionLifecycleState.reclassified);
     return updated;
   }
 
-  LedgerEntry? _latestDebitForTransaction(
-    String transactionId,
-    List<LedgerEntry> ledger,
-  ) {
-    final candidates = ledger.where((entry) =>
-        entry.transactionId == transactionId &&
-        entry.amount.isNegative &&
-        (entry.type == LedgerEntryType.purchase ||
-            entry.type == LedgerEntryType.reclassification));
-    if (candidates.isEmpty) return null;
-    return candidates.last;
+  LedgerEntry? _latestEffectiveDebit({
+    required String transactionId,
+    required List<LedgerEntry> ledger,
+    LedgerType? requiredLedgerType,
+  }) {
+    final candidates = ledger.where((entry) {
+      if (entry.transactionId != transactionId) return false;
+      if (!entry.amount.isNegative) return false;
+      if (requiredLedgerType != null &&
+          entry.ledgerType != requiredLedgerType) {
+        return false;
+      }
+
+      return entry.type == LedgerEntryType.purchase ||
+          entry.type == LedgerEntryType.reclassification;
+    }).toList();
+
+    for (final candidate in candidates.reversed) {
+      final reversed = ledger.any(
+        (entry) => entry.reversesLedgerEntryId == candidate.id,
+      );
+      if (!reversed) return candidate;
+    }
+
+    return null;
   }
 
   Future<void> _lifecycle(
