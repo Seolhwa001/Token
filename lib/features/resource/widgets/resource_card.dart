@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../../../core/display_formatter.dart';
 import '../../analytics/ledger_analytics.dart';
 import '../../ledger/ledger_calculator.dart';
 import '../../ledger/ledger_entry.dart';
@@ -56,7 +58,7 @@ class ResourceCard extends StatelessWidget {
                   Text(resource.name, style: Theme.of(context).textTheme.titleLarge),
                   const SizedBox(height: 6),
                   Text(
-                    '${balance.toDisplayString()} TOKEN',
+                    DisplayFormatter.token(balance),
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                           color: balance.isNegative
                               ? Theme.of(context).colorScheme.error
@@ -65,7 +67,7 @@ class ResourceCard extends StatelessWidget {
                   ),
                   if (!todaySpent.isZero) ...[
                     const SizedBox(height: 6),
-                    Text('오늘 소비 ${todaySpent.toDisplayString()} TOKEN'),
+                    Text('오늘 소비 ${DisplayFormatter.token(todaySpent)}'),
                   ],
                 ],
               ),
