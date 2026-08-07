@@ -7,13 +7,16 @@ import '../resource/resource.dart';
 import '../resource/resource_create_page.dart';
 import '../resource/resource_creation.dart';
 import '../resource/widgets/resource_card.dart';
+import '../transaction/transaction.dart';
 import '../transaction/transaction_create_page.dart';
 import '../transaction/transaction_submission.dart';
+import '../unclassified/unclassified_inspector_page.dart';
 
 class HomePage extends StatelessWidget {
   final ManagementPeriod activePeriod;
   final List<Resource> resources;
   final List<LedgerEntry> ledger;
+  final List<TokenTransaction> transactions;
   final ExchangeRate exchangeRate;
   final Future<void> Function(ResourceCreation creation) onCreateResource;
   final Future<void> Function(TransactionSubmission submission)
@@ -24,6 +27,7 @@ class HomePage extends StatelessWidget {
     required this.activePeriod,
     required this.resources,
     required this.ledger,
+    required this.transactions,
     required this.exchangeRate,
     required this.onCreateResource,
     required this.onCreateTransaction,
@@ -67,9 +71,24 @@ class HomePage extends StatelessWidget {
       );
   }
 
+  void _openUnclassifiedInspector(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => UnclassifiedInspectorPage(
+          transactions: transactions,
+          ledger: ledger,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final remaining = activePeriod.remainingDaysOn(DateTime.now());
+    final unclassifiedCount = pendingUnclassifiedTransactions(
+      transactions: transactions,
+      ledger: ledger,
+    ).length;
 
     return Scaffold(
       appBar: AppBar(title: const Text('TOKEN')),
@@ -117,7 +136,17 @@ class HomePage extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 12),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.inbox_outlined),
+                  title: const Text('미분류 거래'),
+                  subtitle: Text('$unclassifiedCount건'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _openUnclassifiedInspector(context),
+                ),
+              ),
+              const SizedBox(height: 12),
               Expanded(
                 child: resources.isEmpty
                     ? Center(
