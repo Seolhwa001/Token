@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import 'core/exchange_rate.dart';
+import 'features/classification/classification.dart';
 import 'features/classification/classification_repository.dart';
+import 'features/classification/classification_rule.dart';
 import 'features/classification/rule_engine.dart';
 import 'features/classification/rule_repository.dart';
 import 'features/home/home_page.dart';
@@ -47,6 +49,7 @@ class _TokenAppState extends State<TokenApp> {
   List<Resource> _resources = const [];
   List<LedgerEntry> _ledger = const [];
   List<TokenTransaction> _transactions = const [];
+  List<ClassificationResult> _classifications = const [];
   bool _loading = true;
 
   late final TransactionPipeline _pipeline = TransactionPipeline(
@@ -71,6 +74,7 @@ class _TokenAppState extends State<TokenApp> {
     final resources = await _resourceRepository.loadAll();
     final ledger = await _ledgerRepository.loadAll();
     final transactions = await _transactionRepository.loadAll();
+    final classifications = await _classificationRepository.loadAll();
 
     if (!mounted) return;
 
@@ -79,6 +83,7 @@ class _TokenAppState extends State<TokenApp> {
       _resources = resources;
       _ledger = ledger;
       _transactions = transactions;
+      _classifications = classifications;
       _loading = false;
     });
   }
@@ -126,13 +131,65 @@ class _TokenAppState extends State<TokenApp> {
     );
 
     final transactions = await _transactionRepository.loadAll();
+    final classifications = await _classificationRepository.loadAll();
 
     if (!mounted) return;
 
     setState(() {
       _ledger = result.ledger;
       _transactions = transactions;
+      _classifications = classifications;
     });
+  }
+
+  Future<void> _classifyPending(
+    TokenTransaction transaction,
+    String resourceId,
+  ) async {
+    final ledger = await _pipeline.classifyPending(
+      transaction: transaction,
+      resourceId: resourceId,
+    );
+
+    final classifications = await _classificationRepository.loadAll();
+
+    if (!mounted) return;
+
+    setState(() {
+      _ledger = ledger;
+      _classifications = classifications;
+    });
+  }
+
+  Future<void> _createSuggestedRule(
+    TokenTransaction transaction,
+    String resourceId,
+  ) async {
+    final keyword = transaction.merchant.trim();
+
+    if (keyword.isEmpty) return;
+
+    final allRules = await _ruleRepository.listAllIncludingDeleted();
+
+    var maxPriority = 0;
+    for (final rule in allRules) {
+      if (rule.priority > maxPriority) {
+        maxPriority = rule.priority;
+      }
+    }
+
+    final now = DateTime.now();
+
+    await _ruleRepository.insert(
+      ClassificationRule(
+        id: '${now.microsecondsSinceEpoch}-suggested-rule',
+        priority: maxPriority + 1,
+        includeKeywords: [keyword],
+        resourceId: resourceId,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
   }
 
   @override
@@ -161,9 +218,12 @@ class _TokenAppState extends State<TokenApp> {
                   resources: _resources,
                   ledger: _ledger,
                   transactions: _transactions,
+                  classifications: _classifications,
                   exchangeRate: _exchangeRate,
                   onCreateResource: _createResource,
                   onCreateTransaction: _createTransaction,
+                  onClassifyPending: _classifyPending,
+                  onCreateSuggestedRule: _createSuggestedRule,
                 ),
     );
   }
