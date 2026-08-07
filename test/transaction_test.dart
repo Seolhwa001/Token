@@ -10,6 +10,7 @@ void main() {
       won: BigInt.from(13855),
       exchangeRate: ExchangeRate.fromInt(100),
     );
+
     expect(amount.toStorageString(), '138.55');
   });
 
@@ -18,29 +19,47 @@ void main() {
       won: BigInt.from(1),
       exchangeRate: ExchangeRate.parse('160.00'),
     );
+
     expect(amount.toStorageString(), '0.01');
   });
 
-  test('transaction freezes its applied exchange rate', () {
+  test('transaction freezes exchange rate and has no Resource classification', () {
     final transaction = TokenTransaction(
       id: 'transaction-1',
-      resourceId: 'resource-1',
+      source: TransactionSource.manual,
       wonAmount: BigInt.from(13855),
       tokenAmount: TokenAmount.parse('138.55'),
       appliedExchangeRate: ExchangeRate.parse('100.00'),
+      merchant: '맥도날드',
       memo: '점심',
-      createdAt: DateTime.utc(2026, 8, 7),
+      occurredAt: DateTime.utc(2026, 8, 7, 12),
+      createdAt: DateTime.utc(2026, 8, 7, 12),
     );
 
     final restored = TokenTransaction.fromJson(transaction.toJson());
 
+    expect(restored.source, TransactionSource.manual);
     expect(restored.tokenAmount.toStorageString(), '138.55');
     expect(restored.appliedExchangeRate.toStorageString(), '100.00');
+    expect(restored.merchant, '맥도날드');
+    expect(restored.occurredAt, DateTime.utc(2026, 8, 7, 12));
   });
 
-  test('resource balance may become negative', () {
-    final before = TokenAmount.parse('20.00');
-    final spent = TokenAmount.parse('30.00');
-    expect((before - spent).toStorageString(), '-10.00');
+  test('same Transaction shape supports future source types', () {
+    final transaction = TokenTransaction(
+      id: 'transaction-toss',
+      source: TransactionSource.toss,
+      sourceExternalId: 'toss-123',
+      wonAmount: BigInt.from(5000),
+      tokenAmount: TokenAmount.parse('50.00'),
+      appliedExchangeRate: ExchangeRate.parse('100.00'),
+      merchant: '편의점',
+      memo: '',
+      occurredAt: DateTime.utc(2026, 8, 7, 18),
+      createdAt: DateTime.utc(2026, 8, 7, 18),
+    );
+
+    expect(transaction.source, TransactionSource.toss);
+    expect(transaction.sourceExternalId, 'toss-123');
   });
 }
