@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../core/exchange_rate.dart';
 import '../ledger/ledger_entry.dart';
 import '../period/management_period.dart';
@@ -15,7 +16,8 @@ class HomePage extends StatelessWidget {
   final List<LedgerEntry> ledger;
   final ExchangeRate exchangeRate;
   final Future<void> Function(ResourceCreation creation) onCreateResource;
-  final Future<void> Function(TransactionSubmission submission) onCreateTransaction;
+  final Future<void> Function(TransactionSubmission submission)
+      onCreateTransaction;
 
   const HomePage({
     super.key,
@@ -31,7 +33,10 @@ class HomePage extends StatelessWidget {
     final creation = await Navigator.of(context).push<ResourceCreation>(
       MaterialPageRoute(builder: (_) => const ResourceCreatePage()),
     );
-    if (creation != null) await onCreateResource(creation);
+
+    if (creation != null) {
+      await onCreateResource(creation);
+    }
   }
 
   Future<void> _openCreateTransaction(BuildContext context) async {
@@ -44,12 +49,28 @@ class HomePage extends StatelessWidget {
         ),
       ),
     );
-    if (submission != null) await onCreateTransaction(submission);
+
+    if (submission == null) return;
+
+    await onCreateTransaction(submission);
+
+    if (!context.mounted) return;
+
+    final message = submission.userResourceId == null
+        ? '미분류 거래로 저장되었습니다.'
+        : '거래가 저장되었습니다.';
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message)),
+      );
   }
 
   @override
   Widget build(BuildContext context) {
     final remaining = activePeriod.remainingDaysOn(DateTime.now());
+
     return Scaffold(
       appBar: AppBar(title: const Text('TOKEN')),
       floatingActionButton: resources.isEmpty
@@ -65,8 +86,10 @@ class HomePage extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('내가 사용할 수 있는 자원',
-                  style: Theme.of(context).textTheme.headlineSmall),
+              Text(
+                '내가 사용할 수 있는 자원',
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
               const SizedBox(height: 20),
               Card(
                 child: Padding(
@@ -74,14 +97,22 @@ class HomePage extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('현재 관리 기간', style: Theme.of(context).textTheme.labelLarge),
+                      Text(
+                        '현재 관리 기간',
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
                       const SizedBox(height: 8),
                       Text(
-                        '${_formatDate(activePeriod.startDate)} ~ ${_formatDate(activePeriod.endDate)}',
+                        '${_formatDate(activePeriod.startDate)} ~ '
+                        '${_formatDate(activePeriod.endDate)}',
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       const SizedBox(height: 12),
-                      Text(remaining > 0 ? '남은 기간 $remaining일' : '설정한 기간이 종료되었습니다.'),
+                      Text(
+                        remaining > 0
+                            ? '남은 기간 $remaining일'
+                            : '설정한 기간이 종료되었습니다.',
+                      ),
                     ],
                   ),
                 ),
@@ -109,7 +140,8 @@ class HomePage extends StatelessWidget {
                           Expanded(
                             child: ListView.separated(
                               itemCount: resources.length,
-                              separatorBuilder: (_, __) => const SizedBox(height: 12),
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(height: 12),
                               itemBuilder: (context, index) => ResourceCard(
                                 resource: resources[index],
                                 ledger: ledger,
@@ -128,4 +160,5 @@ class HomePage extends StatelessWidget {
 }
 
 String _formatDate(DateTime value) =>
-    '${value.year}.${value.month.toString().padLeft(2, '0')}.${value.day.toString().padLeft(2, '0')}';
+    '${value.year}.${value.month.toString().padLeft(2, '0')}.'
+    '${value.day.toString().padLeft(2, '0')}';
