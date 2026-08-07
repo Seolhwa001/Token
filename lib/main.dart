@@ -14,6 +14,7 @@ import 'features/resource/resource.dart';
 import 'features/resource/resource_creation.dart';
 import 'features/resource/resource_repository.dart';
 import 'features/transaction/lifecycle_repository.dart';
+import 'features/transaction/transaction.dart';
 import 'features/transaction/transaction_pipeline.dart';
 import 'features/transaction/transaction_repository.dart';
 import 'features/transaction/transaction_submission.dart';
@@ -43,6 +44,7 @@ class _TokenAppState extends State<TokenApp> {
   ManagementPeriod? _activePeriod;
   List<Resource> _resources = const [];
   List<LedgerEntry> _ledger = const [];
+  List<TokenTransaction> _transactions = const [];
   bool _loading = true;
 
   late final TransactionPipeline _pipeline = TransactionPipeline(
@@ -61,15 +63,18 @@ class _TokenAppState extends State<TokenApp> {
 
   Future<void> _load() async {
     await PipelineMigration().runIfNeeded();
+
     final period = await _periodRepository.loadActivePeriod();
     final resources = await _resourceRepository.loadAll();
     final ledger = await _ledgerRepository.loadAll();
+    final transactions = await _transactionRepository.loadAll();
 
     if (!mounted) return;
     setState(() {
       _activePeriod = period;
       _resources = resources;
       _ledger = ledger;
+      _transactions = transactions;
       _loading = false;
     });
   }
@@ -97,6 +102,7 @@ class _TokenAppState extends State<TokenApp> {
     }
 
     final ledger = await _ledgerRepository.loadAll();
+
     if (!mounted) return;
     setState(() {
       _resources = resources;
@@ -109,8 +115,14 @@ class _TokenAppState extends State<TokenApp> {
       submission.transaction,
       userResourceId: submission.userResourceId,
     );
+
+    final transactions = await _transactionRepository.loadAll();
+
     if (!mounted) return;
-    setState(() => _ledger = result.ledger);
+    setState(() {
+      _ledger = result.ledger;
+      _transactions = transactions;
+    });
   }
 
   @override
@@ -123,13 +135,16 @@ class _TokenAppState extends State<TokenApp> {
         useMaterial3: true,
       ),
       home: _loading
-          ? const Scaffold(body: Center(child: CircularProgressIndicator()))
+          ? const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            )
           : _activePeriod == null
               ? PeriodSetupPage(onCreate: _createPeriod)
               : HomePage(
                   activePeriod: _activePeriod!,
                   resources: _resources,
                   ledger: _ledger,
+                  transactions: _transactions,
                   exchangeRate: _exchangeRate,
                   onCreateResource: _createResource,
                   onCreateTransaction: _createTransaction,
