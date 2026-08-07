@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'core/exchange_rate.dart';
 import 'features/classification/classification_repository.dart';
 import 'features/classification/rule_engine.dart';
+import 'features/classification/rule_repository.dart';
 import 'features/home/home_page.dart';
 import 'features/ledger/ledger_entry.dart';
 import 'features/ledger/ledger_repository.dart';
@@ -37,6 +38,7 @@ class _TokenAppState extends State<TokenApp> {
   final _ledgerRepository = LedgerRepository();
   final _transactionRepository = TransactionRepository();
   final _classificationRepository = ClassificationRepository();
+  final _ruleRepository = RuleRepository();
   final _lifecycleRepository = LifecycleRepository();
 
   final ExchangeRate _exchangeRate = ExchangeRate.fromInt(100);
@@ -53,6 +55,7 @@ class _TokenAppState extends State<TokenApp> {
     ledgerRepository: _ledgerRepository,
     lifecycleRepository: _lifecycleRepository,
     ruleEngine: const RuleEngine(),
+    ruleRepository: _ruleRepository,
   );
 
   @override
@@ -70,6 +73,7 @@ class _TokenAppState extends State<TokenApp> {
     final transactions = await _transactionRepository.loadAll();
 
     if (!mounted) return;
+
     setState(() {
       _activePeriod = period;
       _resources = resources;
@@ -81,7 +85,9 @@ class _TokenAppState extends State<TokenApp> {
 
   Future<void> _createPeriod(ManagementPeriod period) async {
     await _periodRepository.saveActivePeriod(period);
+
     if (!mounted) return;
+
     setState(() => _activePeriod = period);
   }
 
@@ -104,13 +110,16 @@ class _TokenAppState extends State<TokenApp> {
     final ledger = await _ledgerRepository.loadAll();
 
     if (!mounted) return;
+
     setState(() {
       _resources = resources;
       _ledger = ledger;
     });
   }
 
-  Future<void> _createTransaction(TransactionSubmission submission) async {
+  Future<void> _createTransaction(
+    TransactionSubmission submission,
+  ) async {
     final result = await _pipeline.submit(
       submission.transaction,
       userResourceId: submission.userResourceId,
@@ -119,6 +128,7 @@ class _TokenAppState extends State<TokenApp> {
     final transactions = await _transactionRepository.loadAll();
 
     if (!mounted) return;
+
     setState(() {
       _ledger = result.ledger;
       _transactions = transactions;
@@ -131,15 +141,21 @@ class _TokenAppState extends State<TokenApp> {
       debugShowCheckedModeBanner: false,
       title: 'TOKEN',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.teal,
+        ),
         useMaterial3: true,
       ),
       home: _loading
           ? const Scaffold(
-              body: Center(child: CircularProgressIndicator()),
+              body: Center(
+                child: CircularProgressIndicator(),
+              ),
             )
           : _activePeriod == null
-              ? PeriodSetupPage(onCreate: _createPeriod)
+              ? PeriodSetupPage(
+                  onCreate: _createPeriod,
+                )
               : HomePage(
                   activePeriod: _activePeriod!,
                   resources: _resources,
