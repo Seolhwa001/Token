@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/display_formatter.dart';
 import '../classification/classification.dart';
 import '../ledger/ledger_calculator.dart';
 import '../ledger/ledger_entry.dart';
@@ -133,21 +134,13 @@ class _PendingQueuePageState extends State<PendingQueuePage> {
                       subtitle: Padding(
                         padding: const EdgeInsets.only(top: 8),
                         child: Text(
-                          '${_formatWon(transaction.wonAmount)}원 · '
-                          '${_formatDateTime(transaction.occurredAt)}',
+                          '${DisplayFormatter.won(transaction.wonAmount)} · '
+                          '${DisplayFormatter.dateTime(transaction.occurredAt)}',
                         ),
                       ),
-                      trailing: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            '${transaction.tokenAmount.toDisplayString()} TOKEN',
-                            style: Theme.of(context).textTheme.labelLarge,
-                          ),
-                          const SizedBox(height: 4),
-                          const Icon(Icons.chevron_right),
-                        ],
+                      trailing: Text(
+                        DisplayFormatter.token(transaction.tokenAmount),
+                        style: Theme.of(context).textTheme.labelLarge,
                       ),
                       onTap: () => _openDetail(transaction),
                     ),
@@ -276,20 +269,21 @@ class _PendingDetailPageState extends State<PendingDetailPage> {
             const SizedBox(height: 16),
             _DetailLine(
               label: '원화',
-              value: '${_formatWon(transaction.wonAmount)}원',
+              value: DisplayFormatter.won(transaction.wonAmount),
             ),
             _DetailLine(
               label: 'TOKEN',
-              value: '${transaction.tokenAmount.toDisplayString()} TOKEN',
+              value: DisplayFormatter.token(transaction.tokenAmount),
             ),
             _DetailLine(
               label: '거래일시',
-              value: _formatDateTime(transaction.occurredAt),
+              value: DisplayFormatter.dateTime(transaction.occurredAt),
             ),
             _DetailLine(
               label: '환율',
-              value:
-                  '${transaction.appliedExchangeRate.toDisplayString()}원 = 1 TOKEN',
+              value: DisplayFormatter.exchangeRate(
+                transaction.appliedExchangeRate,
+              ),
             ),
             if (transaction.memo.isNotEmpty)
               _DetailLine(
@@ -318,7 +312,7 @@ class _PendingDetailPageState extends State<PendingDetailPage> {
                   value: resource.id,
                   child: Text(
                     '${resource.name} · '
-                    '${balance.toDisplayString()} TOKEN',
+                    '${DisplayFormatter.token(balance)}',
                   ),
                 );
               }).toList(growable: false),
@@ -420,29 +414,4 @@ class _PendingEmptyState extends StatelessWidget {
       ),
     );
   }
-}
-
-String _formatWon(BigInt value) {
-  final negative = value.isNegative;
-  final digits = value.abs().toString();
-  final buffer = StringBuffer();
-
-  for (var i = 0; i < digits.length; i++) {
-    if (i > 0 && (digits.length - i) % 3 == 0) {
-      buffer.write(',');
-    }
-    buffer.write(digits[i]);
-  }
-
-  return negative ? '-$buffer' : buffer.toString();
-}
-
-String _formatDateTime(DateTime value) {
-  final year = value.year.toString().padLeft(4, '0');
-  final month = value.month.toString().padLeft(2, '0');
-  final day = value.day.toString().padLeft(2, '0');
-  final hour = value.hour.toString().padLeft(2, '0');
-  final minute = value.minute.toString().padLeft(2, '0');
-
-  return '$year.$month.$day $hour:$minute';
 }
