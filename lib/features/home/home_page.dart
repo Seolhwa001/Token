@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../../core/display_formatter.dart';
 import '../../core/exchange_rate.dart';
 import '../classification/classification.dart';
+import '../history/transaction_history_page.dart';
 import '../ledger/ledger_entry.dart';
 import '../pending/pending_queue_page.dart';
 import '../period/management_period.dart';
@@ -99,6 +101,19 @@ class HomePage extends StatelessWidget {
     );
   }
 
+  void _openHistory(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => TransactionHistoryPage(
+          transactions: transactions,
+          classifications: classifications,
+          ledger: ledger,
+          resources: resources,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final remaining = activePeriod.remainingDaysOn(DateTime.now());
@@ -109,7 +124,16 @@ class HomePage extends StatelessWidget {
     ).length;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('TOKEN')),
+      appBar: AppBar(
+        title: const Text('TOKEN'),
+        actions: [
+          IconButton(
+            tooltip: '거래 내역',
+            onPressed: () => _openHistory(context),
+            icon: const Icon(Icons.history),
+          ),
+        ],
+      ),
       floatingActionButton: resources.isEmpty
           ? null
           : FloatingActionButton.extended(
@@ -140,8 +164,8 @@ class HomePage extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        '${_formatDate(activePeriod.startDate)} ~ '
-                        '${_formatDate(activePeriod.endDate)}',
+                        '${DisplayFormatter.date(activePeriod.startDate)} ~ '
+                        '${DisplayFormatter.date(activePeriod.endDate)}',
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       const SizedBox(height: 12),
@@ -155,18 +179,32 @@ class HomePage extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.pending_actions_outlined),
-                  title: const Text('분류 대기'),
-                  subtitle: Text(
-                    pendingCount == 0
-                        ? '처리할 거래가 없습니다.'
-                        : '$pendingCount건의 거래가 분류를 기다리고 있습니다.',
+              Row(
+                children: [
+                  Expanded(
+                    child: Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.pending_actions_outlined),
+                        title: const Text('분류 대기'),
+                        subtitle: Text(
+                          pendingCount == 0 ? '없음' : '$pendingCount건',
+                        ),
+                        onTap: () => _openPendingQueue(context),
+                      ),
+                    ),
                   ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => _openPendingQueue(context),
-                ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.history),
+                        title: const Text('거래 내역'),
+                        subtitle: Text('${transactions.length}건'),
+                        onTap: () => _openHistory(context),
+                      ),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 12),
               Expanded(
@@ -209,7 +247,3 @@ class HomePage extends StatelessWidget {
     );
   }
 }
-
-String _formatDate(DateTime value) =>
-    '${value.year}.${value.month.toString().padLeft(2, '0')}.'
-    '${value.day.toString().padLeft(2, '0')}';
