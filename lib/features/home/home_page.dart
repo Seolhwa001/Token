@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../core/exchange_rate.dart';
+import '../classification/classification.dart';
 import '../ledger/ledger_entry.dart';
+import '../pending/pending_queue_page.dart';
 import '../period/management_period.dart';
 import '../resource/resource.dart';
 import '../resource/resource_create_page.dart';
@@ -10,17 +12,25 @@ import '../resource/widgets/resource_card.dart';
 import '../transaction/transaction.dart';
 import '../transaction/transaction_create_page.dart';
 import '../transaction/transaction_submission.dart';
-import '../unclassified/unclassified_inspector_page.dart';
 
 class HomePage extends StatelessWidget {
   final ManagementPeriod activePeriod;
   final List<Resource> resources;
   final List<LedgerEntry> ledger;
   final List<TokenTransaction> transactions;
+  final List<ClassificationResult> classifications;
   final ExchangeRate exchangeRate;
   final Future<void> Function(ResourceCreation creation) onCreateResource;
   final Future<void> Function(TransactionSubmission submission)
       onCreateTransaction;
+  final Future<void> Function(
+    TokenTransaction transaction,
+    String resourceId,
+  ) onClassifyPending;
+  final Future<void> Function(
+    TokenTransaction transaction,
+    String resourceId,
+  ) onCreateSuggestedRule;
 
   const HomePage({
     super.key,
@@ -28,9 +38,12 @@ class HomePage extends StatelessWidget {
     required this.resources,
     required this.ledger,
     required this.transactions,
+    required this.classifications,
     required this.exchangeRate,
     required this.onCreateResource,
     required this.onCreateTransaction,
+    required this.onClassifyPending,
+    required this.onCreateSuggestedRule,
   });
 
   Future<void> _openCreateResource(BuildContext context) async {
@@ -61,7 +74,7 @@ class HomePage extends StatelessWidget {
     if (!context.mounted) return;
 
     final message = submission.userResourceId == null
-        ? '미분류 거래로 저장되었습니다.'
+        ? '거래를 저장했습니다. 자동분류되지 않으면 분류 대기로 이동합니다.'
         : '거래가 저장되었습니다.';
 
     ScaffoldMessenger.of(context)
@@ -71,12 +84,16 @@ class HomePage extends StatelessWidget {
       );
   }
 
-  void _openUnclassifiedInspector(BuildContext context) {
+  void _openPendingQueue(BuildContext context) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => UnclassifiedInspectorPage(
+        builder: (_) => PendingQueuePage(
           transactions: transactions,
+          classifications: classifications,
+          resources: resources,
           ledger: ledger,
+          onClassify: onClassifyPending,
+          onCreateSuggestedRule: onCreateSuggestedRule,
         ),
       ),
     );
@@ -85,9 +102,10 @@ class HomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final remaining = activePeriod.remainingDaysOn(DateTime.now());
-    final unclassifiedCount = pendingUnclassifiedTransactions(
+
+    final pendingCount = pendingTransactionsFromCurrentClassification(
       transactions: transactions,
-      ledger: ledger,
+      classifications: classifications,
     ).length;
 
     return Scaffold(
@@ -139,11 +157,15 @@ class HomePage extends StatelessWidget {
               const SizedBox(height: 12),
               Card(
                 child: ListTile(
-                  leading: const Icon(Icons.inbox_outlined),
-                  title: const Text('미분류 거래'),
-                  subtitle: Text('$unclassifiedCount건'),
+                  leading: const Icon(Icons.pending_actions_outlined),
+                  title: const Text('분류 대기'),
+                  subtitle: Text(
+                    pendingCount == 0
+                        ? '처리할 거래가 없습니다.'
+                        : '$pendingCount건의 거래가 분류를 기다리고 있습니다.',
+                  ),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () => _openUnclassifiedInspector(context),
+                  onTap: () => _openPendingQueue(context),
                 ),
               ),
               const SizedBox(height: 12),
