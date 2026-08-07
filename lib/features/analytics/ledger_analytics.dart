@@ -10,16 +10,51 @@ class LedgerAnalytics {
     required List<LedgerEntry> ledger,
   }) {
     final net = ledger.where((entry) {
-      if (entry.resourceId != resourceId || !_sameDay(entry.createdAt, day)) {
-        return false;
-      }
+      return entry.ledgerType == LedgerType.resource &&
+          entry.resourceId == resourceId &&
+          entry.transactionId != null &&
+          _sameDay(entry.createdAt, day);
+    }).fold<BigInt>(
+      BigInt.zero,
+      (sum, entry) => sum + entry.amount.minorUnits,
+    );
+
+    return _consumptionFromNet(net);
+  }
+
+  TokenAmount totalConsumption({
+    required List<LedgerEntry> ledger,
+  }) {
+    final net = ledger.where((entry) {
+      if (entry.ledgerType == LedgerType.system) return false;
       return entry.transactionId != null;
     }).fold<BigInt>(
       BigInt.zero,
       (sum, entry) => sum + entry.amount.minorUnits,
     );
 
-    return TokenAmount.fromMinorUnits(net.isNegative ? net.abs() : BigInt.zero);
+    return _consumptionFromNet(net);
+  }
+
+  TokenAmount totalConsumptionOnDay({
+    required DateTime day,
+    required List<LedgerEntry> ledger,
+  }) {
+    final net = ledger.where((entry) {
+      if (entry.ledgerType == LedgerType.system) return false;
+      return entry.transactionId != null && _sameDay(entry.createdAt, day);
+    }).fold<BigInt>(
+      BigInt.zero,
+      (sum, entry) => sum + entry.amount.minorUnits,
+    );
+
+    return _consumptionFromNet(net);
+  }
+
+  TokenAmount _consumptionFromNet(BigInt net) {
+    return TokenAmount.fromMinorUnits(
+      net.isNegative ? net.abs() : BigInt.zero,
+    );
   }
 }
 
