@@ -73,6 +73,16 @@ void main() {
     expect(find.text('거래 상세'), findsOneWidget);
     expect(find.text('Ledger 이력 (1)'), findsOneWidget);
     expect(find.text('분류 이력 (1)'), findsOneWidget);
+
+    // Refund section is lower in the lazy ListView.
+    // Scroll it into view before asserting its text.
+    await tester.scrollUntilVisible(
+      find.text('환불 이력 (0)'),
+      300,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.pumpAndSettle();
+
     expect(find.text('환불 이력 (0)'), findsOneWidget);
   });
 }
