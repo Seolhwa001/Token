@@ -110,8 +110,10 @@ class _TransactionCreatePageState extends State<TransactionCreatePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('소비를 기록하세요',
-                  style: Theme.of(context).textTheme.headlineSmall),
+              Text(
+                '소비를 기록하세요',
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
               const SizedBox(height: 8),
               Text(
                 '현재 환율: ${widget.exchangeRate.toDisplayString()}원 = 1 TOKEN',
@@ -128,18 +130,20 @@ class _TransactionCreatePageState extends State<TransactionCreatePage> {
               ),
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
-                value: _resourceId,
+                initialValue: _resourceId,
                 decoration: const InputDecoration(
                   labelText: '사용 자원',
                   border: OutlineInputBorder(),
                 ),
                 items: widget.resources
-                    .map((resource) => DropdownMenuItem(
-                          value: resource.id,
-                          child: Text(
-                            '${resource.name} · ${resource.balance.toDisplayString()} TOKEN',
-                          ),
-                        ))
+                    .map(
+                      (resource) => DropdownMenuItem(
+                        value: resource.id,
+                        child: Text(
+                          '${resource.name} · ${resource.balance.toDisplayString()} TOKEN',
+                        ),
+                      ),
+                    )
                     .toList(),
                 onChanged: (value) => setState(() => _resourceId = value),
               ),
@@ -172,7 +176,9 @@ class _TransactionCreatePageState extends State<TransactionCreatePage> {
                 const SizedBox(height: 16),
                 Text(
                   _errorText!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                  ),
                 ),
               ],
               const Spacer(),
