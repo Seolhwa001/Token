@@ -1,54 +1,55 @@
 import 'package:flutter/material.dart';
-
 import '../../core/exchange_rate.dart';
+import '../ledger/ledger_entry.dart';
 import '../period/management_period.dart';
 import '../resource/resource.dart';
 import '../resource/resource_create_page.dart';
+import '../resource/resource_creation.dart';
 import '../resource/widgets/resource_card.dart';
-import '../transaction/transaction.dart';
 import '../transaction/transaction_create_page.dart';
+import '../transaction/transaction_submission.dart';
 
 class HomePage extends StatelessWidget {
   final ManagementPeriod activePeriod;
   final List<Resource> resources;
-  final List<TokenTransaction> transactions;
+  final List<LedgerEntry> ledger;
   final ExchangeRate exchangeRate;
-  final Future<void> Function(Resource resource) onCreateResource;
-  final Future<void> Function(TokenTransaction transaction) onCreateTransaction;
+  final Future<void> Function(ResourceCreation creation) onCreateResource;
+  final Future<void> Function(TransactionSubmission submission) onCreateTransaction;
 
   const HomePage({
     super.key,
     required this.activePeriod,
     required this.resources,
-    required this.transactions,
+    required this.ledger,
     required this.exchangeRate,
     required this.onCreateResource,
     required this.onCreateTransaction,
   });
 
   Future<void> _openCreateResource(BuildContext context) async {
-    final resource = await Navigator.of(context).push<Resource>(
+    final creation = await Navigator.of(context).push<ResourceCreation>(
       MaterialPageRoute(builder: (_) => const ResourceCreatePage()),
     );
-    if (resource != null) await onCreateResource(resource);
+    if (creation != null) await onCreateResource(creation);
   }
 
   Future<void> _openCreateTransaction(BuildContext context) async {
-    final transaction = await Navigator.of(context).push<TokenTransaction>(
+    final submission = await Navigator.of(context).push<TransactionSubmission>(
       MaterialPageRoute(
         builder: (_) => TransactionCreatePage(
           resources: resources,
+          ledger: ledger,
           exchangeRate: exchangeRate,
         ),
       ),
     );
-    if (transaction != null) await onCreateTransaction(transaction);
+    if (submission != null) await onCreateTransaction(submission);
   }
 
   @override
   Widget build(BuildContext context) {
     final remaining = activePeriod.remainingDaysOn(DateTime.now());
-
     return Scaffold(
       appBar: AppBar(title: const Text('TOKEN')),
       floatingActionButton: resources.isEmpty
@@ -73,20 +74,14 @@ class HomePage extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('현재 관리 기간',
-                          style: Theme.of(context).textTheme.labelLarge),
+                      Text('현재 관리 기간', style: Theme.of(context).textTheme.labelLarge),
                       const SizedBox(height: 8),
                       Text(
                         '${_formatDate(activePeriod.startDate)} ~ ${_formatDate(activePeriod.endDate)}',
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       const SizedBox(height: 12),
-                      Text(
-                        remaining > 0
-                            ? '남은 기간 $remaining일'
-                            : '설정한 기간이 종료되었습니다.',
-                        style: Theme.of(context).textTheme.bodyLarge,
-                      ),
+                      Text(remaining > 0 ? '남은 기간 $remaining일' : '설정한 기간이 종료되었습니다.'),
                     ],
                   ),
                 ),
@@ -94,8 +89,12 @@ class HomePage extends StatelessWidget {
               const SizedBox(height: 24),
               Expanded(
                 child: resources.isEmpty
-                    ? _EmptyResources(
-                        onCreate: () => _openCreateResource(context),
+                    ? Center(
+                        child: FilledButton.icon(
+                          onPressed: () => _openCreateResource(context),
+                          icon: const Icon(Icons.add),
+                          label: const Text('자원 만들기'),
+                        ),
                       )
                     : Column(
                         children: [
@@ -107,15 +106,13 @@ class HomePage extends StatelessWidget {
                               label: const Text('자원 추가'),
                             ),
                           ),
-                          const SizedBox(height: 4),
                           Expanded(
                             child: ListView.separated(
                               itemCount: resources.length,
-                              separatorBuilder: (_, __) =>
-                                  const SizedBox(height: 12),
+                              separatorBuilder: (_, __) => const SizedBox(height: 12),
                               itemBuilder: (context, index) => ResourceCard(
                                 resource: resources[index],
-                                transactions: transactions,
+                                ledger: ledger,
                               ),
                             ),
                           ),
@@ -125,34 +122,6 @@ class HomePage extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _EmptyResources extends StatelessWidget {
-  final VoidCallback onCreate;
-  const _EmptyResources({required this.onCreate});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.account_balance_wallet_outlined, size: 48),
-          const SizedBox(height: 16),
-          Text('아직 TOKEN 자원이 없습니다.',
-              style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          const Text('사용할 수 있는 자원을 직접 만들어보세요.'),
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            onPressed: onCreate,
-            icon: const Icon(Icons.add),
-            label: const Text('자원 만들기'),
-          ),
-        ],
       ),
     );
   }
