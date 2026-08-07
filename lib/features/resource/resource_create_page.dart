@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-
 import '../../core/token_amount.dart';
 import 'resource.dart';
+import 'resource_creation.dart';
 
 class ResourceCreatePage extends StatefulWidget {
   const ResourceCreatePage({super.key});
@@ -13,7 +13,6 @@ class ResourceCreatePage extends StatefulWidget {
 class _ResourceCreatePageState extends State<ResourceCreatePage> {
   final _nameController = TextEditingController();
   final _amountController = TextEditingController(text: '0');
-
   String _selectedColorKey = 'teal';
   String? _errorText;
 
@@ -35,32 +34,31 @@ class _ResourceCreatePageState extends State<ResourceCreatePage> {
 
   void _create() {
     final name = _nameController.text.trim();
-
     if (name.isEmpty) {
       setState(() => _errorText = '자원 이름을 입력하세요.');
       return;
     }
 
-    TokenAmount amount;
+    TokenAmount initialAmount;
     try {
-      amount = TokenAmount.parse(_amountController.text);
+      initialAmount = TokenAmount.parse(_amountController.text);
     } on FormatException {
-      setState(
-        () => _errorText = 'TOKEN은 소수 둘째 자리까지 입력할 수 있습니다.',
-      );
+      setState(() => _errorText = 'TOKEN은 소수 둘째 자리까지 입력할 수 있습니다.');
       return;
     }
 
     final now = DateTime.now();
-    final resource = Resource(
-      id: '${now.microsecondsSinceEpoch}',
-      name: name,
-      balance: amount,
-      colorKey: _selectedColorKey,
-      createdAt: now,
+    Navigator.of(context).pop(
+      ResourceCreation(
+        resource: Resource(
+          id: '${now.microsecondsSinceEpoch}',
+          name: name,
+          colorKey: _selectedColorKey,
+          createdAt: now,
+        ),
+        initialAmount: initialAmount,
+      ),
     );
-
-    Navigator.of(context).pop(resource);
   }
 
   @override
@@ -73,18 +71,13 @@ class _ResourceCreatePageState extends State<ResourceCreatePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                '사용할 자원을 만드세요',
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
+              Text('사용할 자원을 만드세요',
+                  style: Theme.of(context).textTheme.headlineSmall),
               const SizedBox(height: 8),
-              const Text(
-                'TOKEN은 사용자가 직접 지급합니다. 초기 TOKEN은 음수도 허용됩니다.',
-              ),
+              const Text('초기 TOKEN 지급도 Ledger에 기록됩니다. 음수도 허용됩니다.'),
               const SizedBox(height: 28),
               TextField(
                 controller: _nameController,
-                textInputAction: TextInputAction.next,
                 decoration: const InputDecoration(
                   labelText: '자원 이름',
                   hintText: '예: 식비, 차량비, 여가',
@@ -94,32 +87,21 @@ class _ResourceCreatePageState extends State<ResourceCreatePage> {
               const SizedBox(height: 16),
               TextField(
                 controller: _amountController,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                  signed: true,
-                ),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
                 decoration: const InputDecoration(
                   labelText: '초기 TOKEN',
-                  hintText: '예: 100 또는 138.55',
                   border: OutlineInputBorder(),
                 ),
               ),
               const SizedBox(height: 24),
-              Text(
-                '색상',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
+              Text('색상', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 12),
               Wrap(
                 spacing: 12,
-                runSpacing: 12,
                 children: _colors.entries.map((entry) {
                   final selected = entry.key == _selectedColorKey;
-
                   return InkWell(
-                    onTap: () {
-                      setState(() => _selectedColorKey = entry.key);
-                    },
+                    onTap: () => setState(() => _selectedColorKey = entry.key),
                     borderRadius: BorderRadius.circular(24),
                     child: Container(
                       width: 44,
@@ -128,29 +110,17 @@ class _ResourceCreatePageState extends State<ResourceCreatePage> {
                         color: entry.value,
                         shape: BoxShape.circle,
                         border: selected
-                            ? Border.all(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurface,
-                                width: 3,
-                              )
+                            ? Border.all(color: Theme.of(context).colorScheme.onSurface, width: 3)
                             : null,
                       ),
-                      child: selected
-                          ? const Icon(Icons.check, color: Colors.white)
-                          : null,
+                      child: selected ? const Icon(Icons.check, color: Colors.white) : null,
                     ),
                   );
                 }).toList(),
               ),
               if (_errorText != null) ...[
                 const SizedBox(height: 20),
-                Text(
-                  _errorText!,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.error,
-                  ),
-                ),
+                Text(_errorText!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
               ],
               const Spacer(),
               SizedBox(
