@@ -4,6 +4,8 @@ import 'features/home/home_page.dart';
 import 'features/period/management_period.dart';
 import 'features/period/period_repository.dart';
 import 'features/period/period_setup_page.dart';
+import 'features/resource/resource.dart';
+import 'features/resource/resource_repository.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -19,7 +21,10 @@ class TokenApp extends StatefulWidget {
 
 class _TokenAppState extends State<TokenApp> {
   final PeriodRepository _periodRepository = PeriodRepository();
+  final ResourceRepository _resourceRepository = ResourceRepository();
+
   ManagementPeriod? _activePeriod;
+  List<Resource> _resources = const [];
   bool _loading = true;
 
   @override
@@ -30,9 +35,12 @@ class _TokenAppState extends State<TokenApp> {
 
   Future<void> _load() async {
     final period = await _periodRepository.loadActivePeriod();
+    final resources = await _resourceRepository.loadAll();
+
     if (!mounted) return;
     setState(() {
       _activePeriod = period;
+      _resources = resources;
       _loading = false;
     });
   }
@@ -41,6 +49,12 @@ class _TokenAppState extends State<TokenApp> {
     await _periodRepository.saveActivePeriod(period);
     if (!mounted) return;
     setState(() => _activePeriod = period);
+  }
+
+  Future<void> _createResource(Resource resource) async {
+    final updated = await _resourceRepository.add(resource);
+    if (!mounted) return;
+    setState(() => _resources = updated);
   }
 
   @override
@@ -56,7 +70,11 @@ class _TokenAppState extends State<TokenApp> {
           ? const _LoadingPage()
           : _activePeriod == null
               ? PeriodSetupPage(onCreate: _createPeriod)
-              : HomePage(activePeriod: _activePeriod!),
+              : HomePage(
+                  activePeriod: _activePeriod!,
+                  resources: _resources,
+                  onCreateResource: _createResource,
+                ),
     );
   }
 }
