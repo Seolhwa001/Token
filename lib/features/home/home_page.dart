@@ -129,6 +129,7 @@ class HomePage extends StatelessWidget {
     final pendingCount = pendingTransactionsFromCurrentClassification(
       transactions: transactions,
       classifications: classifications,
+      ledger: ledger,
     ).length;
 
     return Scaffold(
@@ -194,7 +195,9 @@ class HomePage extends StatelessWidget {
                       child: ListTile(
                         leading: const Icon(Icons.pending_actions_outlined),
                         title: const Text('분류 대기'),
-                        subtitle: Text(pendingCount == 0 ? '없음' : '$pendingCount건'),
+                        subtitle: Text(
+                          pendingCount == 0 ? '없음' : '$pendingCount건',
+                        ),
                         onTap: () => _openPendingQueue(context),
                       ),
                     ),
