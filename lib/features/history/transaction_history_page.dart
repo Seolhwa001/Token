@@ -11,6 +11,8 @@ class TransactionHistoryPage extends StatelessWidget {
   final List<ClassificationResult> classifications;
   final List<LedgerEntry> ledger;
   final List<Resource> resources;
+  final Future<void> Function(TokenTransaction, BigInt)? onRefund;
+  final Future<void> Function(TokenTransaction, String)? onReclassify;
 
   const TransactionHistoryPage({
     super.key,
@@ -18,7 +20,37 @@ class TransactionHistoryPage extends StatelessWidget {
     required this.classifications,
     required this.ledger,
     required this.resources,
+    this.onRefund,
+    this.onReclassify,
   });
+
+  Future<void> _openDetail(
+    BuildContext context,
+    TokenTransaction tx,
+  ) async {
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => TransactionDetailPage(
+          transaction: tx,
+          classifications: classifications
+              .where((c) => c.transactionId == tx.id)
+              .toList(growable: false),
+          ledger: ledger
+              .where((e) => e.transactionId == tx.id)
+              .toList(growable: false),
+          resources: resources,
+          onRefund: onRefund,
+          onReclassify: onReclassify,
+        ),
+      ),
+    );
+
+    // Parent Home owns the authoritative accounting state.
+    // After a mutation, close History once so reopening shows refreshed data.
+    if (changed == true && context.mounted) {
+      Navigator.of(context).pop();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -38,12 +70,17 @@ class TransactionHistoryPage extends StatelessWidget {
                   final tx = sorted[index];
                   final current = _current(tx.id, classifications);
                   final refunded = ledger.any(
-                    (e) => e.transactionId == tx.id && e.type == LedgerEntryType.refund,
+                    (e) =>
+                        e.transactionId == tx.id &&
+                        e.type == LedgerEntryType.refund,
                   );
+
                   return Card(
                     child: ListTile(
                       contentPadding: const EdgeInsets.all(16),
-                      title: Text(tx.merchant.isEmpty ? '가맹점 정보 없음' : tx.merchant),
+                      title: Text(
+                        tx.merchant.isEmpty ? '가맹점 정보 없음' : tx.merchant,
+                      ),
                       subtitle: Padding(
                         padding: const EdgeInsets.only(top: 8),
                         child: Column(
@@ -71,20 +108,7 @@ class TransactionHistoryPage extends StatelessWidget {
                           Text(DisplayFormatter.token(tx.tokenAmount)),
                         ],
                       ),
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => TransactionDetailPage(
-                            transaction: tx,
-                            classifications: classifications
-                                .where((c) => c.transactionId == tx.id)
-                                .toList(growable: false),
-                            ledger: ledger
-                                .where((e) => e.transactionId == tx.id)
-                                .toList(growable: false),
-                            resources: resources,
-                          ),
-                        ),
-                      ),
+                      onTap: () => _openDetail(context, tx),
                     ),
                   );
                 },
@@ -94,11 +118,13 @@ class TransactionHistoryPage extends StatelessWidget {
   }
 }
 
-class TransactionDetailPage extends StatelessWidget {
+class TransactionDetailPage extends StatefulWidget {
   final TokenTransaction transaction;
   final List<ClassificationResult> classifications;
   final List<LedgerEntry> ledger;
   final List<Resource> resources;
+  final Future<void> Function(TokenTransaction, BigInt)? onRefund;
+  final Future<void> Function(TokenTransaction, String)? onReclassify;
 
   const TransactionDetailPage({
     super.key,
@@ -106,13 +132,193 @@ class TransactionDetailPage extends StatelessWidget {
     required this.classifications,
     required this.ledger,
     required this.resources,
+    this.onRefund,
+    this.onReclassify,
   });
 
   @override
+  State<TransactionDetailPage> createState() => _TransactionDetailPageState();
+}
+
+class _TransactionDetailPageState extends State<TransactionDetailPage> {
+  bool _busy = false;
+
+  BigInt get _remainingWon {
+    var refundedMinor = BigInt.zero;
+    for (final e in widget.ledger) {
+      if (e.type == LedgerEntryType.refund && !e.amount.isNegative) {
+        refundedMinor += e.amount.minorUnits;
+      }
+    }
+
+    final refundedWon =
+        (refundedMinor * widget.transaction.appliedExchangeRate.minorWonPerToken) ~/
+            BigInt.from(10000);
+    final remaining = widget.transaction.wonAmount - refundedWon;
+    return remaining.isNegative ? BigInt.zero : remaining;
+  }
+
+  Future<void> _refund() async {
+    if (_remainingWon <= BigInt.zero) return;
+
+    final controller = TextEditingController(
+      text: _remainingWon.toString(),
+    );
+
+    final amount = await showDialog<BigInt>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('환불 처리'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('남은 환불 가능 금액: ${DisplayFormatter.won(_remainingWon)}'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: '환불 금액(원)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('취소'),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(_remainingWon),
+            child: const Text('전액 환불'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final raw = controller.text.trim().replaceAll(',', '');
+              final parsed = BigInt.tryParse(raw);
+              Navigator.of(dialogContext).pop(parsed);
+            },
+            child: const Text('환불'),
+          ),
+        ],
+      ),
+    );
+
+    controller.dispose();
+    if (amount == null) return;
+
+    if (amount <= BigInt.zero || amount > _remainingWon) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('환불 가능 범위의 금액을 입력하세요.')),
+      );
+      return;
+    }
+
+    setState(() => _busy = true);
+    try {
+      final callback = widget.onRefund;
+      if (callback == null) return;
+      await callback(widget.transaction, amount);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${DisplayFormatter.won(amount)} 환불 완료')),
+      );
+      Navigator.of(context).pop(true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('환불 실패: $error')),
+      );
+    }
+  }
+
+  Future<void> _reclassify() async {
+    final current = widget.classifications.isEmpty
+        ? null
+        : ([...widget.classifications]
+              ..sort((a, b) => a.createdAt.compareTo(b.createdAt)))
+            .last;
+
+    String? selected = widget.resources
+        .where((r) => r.id != current?.resourceId)
+        .map((r) => r.id)
+        .cast<String?>()
+        .firstOrNull;
+
+    if (selected == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('선택할 다른 자원이 없습니다.')),
+      );
+      return;
+    }
+
+    final resourceId = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('재분류'),
+          content: DropdownButtonFormField<String>(
+            initialValue: selected,
+            decoration: const InputDecoration(
+              labelText: '새 자원',
+              border: OutlineInputBorder(),
+            ),
+            items: widget.resources
+                .where((r) => r.id != current?.resourceId)
+                .map(
+                  (r) => DropdownMenuItem(
+                    value: r.id,
+                    child: Text(r.name),
+                  ),
+                )
+                .toList(growable: false),
+            onChanged: (value) => setDialogState(() => selected = value),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('취소'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(selected),
+              child: const Text('재분류'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (resourceId == null) return;
+
+    setState(() => _busy = true);
+    try {
+      final callback = widget.onReclassify;
+      if (callback == null) return;
+      await callback(widget.transaction, resourceId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('재분류가 완료되었습니다.')),
+      );
+      Navigator.of(context).pop(true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('재분류 실패: $error')),
+      );
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final classHistory = [...classifications]
+    final classHistory = [...widget.classifications]
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-    final ledgerHistory = [...ledger]
+    final ledgerHistory = [...widget.ledger]
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
     final refunds = ledgerHistory
         .where((e) => e.type == LedgerEntryType.refund)
@@ -126,24 +332,66 @@ class TransactionDetailPage extends StatelessWidget {
           padding: const EdgeInsets.all(24),
           children: [
             Text(
-              transaction.merchant.isEmpty ? '가맹점 정보 없음' : transaction.merchant,
+              widget.transaction.merchant.isEmpty
+                  ? '가맹점 정보 없음'
+                  : widget.transaction.merchant,
               style: Theme.of(context).textTheme.headlineSmall,
             ),
             const SizedBox(height: 20),
-            _Info('거래일시', DisplayFormatter.dateTime(transaction.occurredAt)),
-            _Info('원화', DisplayFormatter.won(transaction.wonAmount)),
-            _Info('TOKEN', DisplayFormatter.token(transaction.tokenAmount)),
+            _Info(
+              '거래일시',
+              DisplayFormatter.dateTime(widget.transaction.occurredAt),
+            ),
+            _Info('원화', DisplayFormatter.won(widget.transaction.wonAmount)),
+            _Info(
+              'TOKEN',
+              DisplayFormatter.token(widget.transaction.tokenAmount),
+            ),
             _Info(
               '적용 환율',
-              DisplayFormatter.exchangeRate(transaction.appliedExchangeRate),
+              DisplayFormatter.exchangeRate(
+                widget.transaction.appliedExchangeRate,
+              ),
             ),
             _Info(
               '현재 자원',
-              _resourceName(current?.resourceId, resources) ?? '미분류',
+              _resourceName(current?.resourceId, widget.resources) ?? '미분류',
             ),
             _Info('분류 상태', _classificationLabel(current)),
-            _Info('환불 상태', refunds.isEmpty ? '환불 없음' : '환불 기록 있음'),
-            if (transaction.memo.isNotEmpty) _Info('메모', transaction.memo),
+            _Info(
+              '환불 가능',
+              DisplayFormatter.won(_remainingWon),
+            ),
+            if (widget.transaction.memo.isNotEmpty)
+              _Info('메모', widget.transaction.memo),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _busy ||
+                            _remainingWon <= BigInt.zero ||
+                            widget.onReclassify == null
+                        ? null
+                        : _reclassify,
+                    icon: const Icon(Icons.swap_horiz),
+                    label: const Text('재분류'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: _busy ||
+                            _remainingWon <= BigInt.zero ||
+                            widget.onRefund == null
+                        ? null
+                        : _refund,
+                    icon: const Icon(Icons.undo),
+                    label: const Text('환불'),
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 28),
             _Section('분류 이력', classHistory.length),
             if (classHistory.isEmpty)
@@ -152,7 +400,8 @@ class TransactionDetailPage extends StatelessWidget {
               ...classHistory.map(
                 (c) => _Timeline(
                   title: _classificationLabel(c),
-                  value: _resourceName(c.resourceId, resources) ?? '미분류',
+                  value:
+                      _resourceName(c.resourceId, widget.resources) ?? '미분류',
                   time: c.createdAt,
                   detail: c.ruleId == null ? null : 'Rule: ${c.ruleId}',
                 ),
@@ -169,7 +418,8 @@ class TransactionDetailPage extends StatelessWidget {
                   time: e.createdAt,
                   detail: [
                     if (e.resourceId != null)
-                      _resourceName(e.resourceId, resources) ?? e.resourceId!,
+                      _resourceName(e.resourceId, widget.resources) ??
+                          e.resourceId!,
                     e.ledgerType.name.toUpperCase(),
                     if (e.reversesLedgerEntryId != null)
                       'reverseOf=${e.reversesLedgerEntryId}',
@@ -186,9 +436,6 @@ class TransactionDetailPage extends StatelessWidget {
                   title: '환불',
                   value: DisplayFormatter.token(e.amount),
                   time: e.createdAt,
-                  detail: e.reversesLedgerEntryId == null
-                      ? null
-                      : 'reverseOf=${e.reversesLedgerEntryId}',
                 ),
               ),
           ],
@@ -321,6 +568,16 @@ class _Empty extends StatelessWidget {
   const _Empty(this.text);
 
   @override
-  Widget build(BuildContext context) =>
-      Padding(padding: const EdgeInsets.symmetric(vertical: 12), child: Text(text));
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Text(text),
+      );
+}
+
+extension _FirstOrNull<T> on Iterable<T> {
+  T? get firstOrNull {
+    final iterator = this.iterator;
+    if (!iterator.moveNext()) return null;
+    return iterator.current;
+  }
 }
