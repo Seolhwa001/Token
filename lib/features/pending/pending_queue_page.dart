@@ -1,15 +1,37 @@
 import 'package:flutter/material.dart';
 
 import '../../core/display_formatter.dart';
+import '../../core/token_amount.dart';
 import '../classification/classification.dart';
 import '../ledger/ledger_calculator.dart';
 import '../ledger/ledger_entry.dart';
 import '../resource/resource.dart';
 import '../transaction/transaction.dart';
 
+TokenAmount effectiveUnclassifiedTokenForTransaction({
+  required String transactionId,
+  required List<LedgerEntry> ledger,
+}) {
+  var minor = BigInt.zero;
+
+  for (final entry in ledger) {
+    if (entry.transactionId == transactionId &&
+        entry.ledgerType == LedgerType.unclassified) {
+      minor += entry.amount.minorUnits;
+    }
+  }
+
+  if (minor >= BigInt.zero) {
+    return TokenAmount.zero();
+  }
+
+  return TokenAmount.fromMinorUnits(-minor);
+}
+
 List<TokenTransaction> pendingTransactionsFromCurrentClassification({
   required List<TokenTransaction> transactions,
   required List<ClassificationResult> classifications,
+  List<LedgerEntry> ledger = const [],
 }) {
   final currentByTransaction = <String, ClassificationResult>{};
 
@@ -26,7 +48,23 @@ List<TokenTransaction> pendingTransactionsFromCurrentClassification({
 
   final pending = transactions.where((transaction) {
     final current = currentByTransaction[transaction.id];
-    return current?.status == ClassificationStatus.unclassified;
+
+    if (current?.status != ClassificationStatus.unclassified) {
+      return false;
+    }
+
+    // Backward-compatible behavior for unit tests or callers that do not
+    // provide Ledger. Production UI always supplies Ledger.
+    if (ledger.isEmpty) {
+      return true;
+    }
+
+    // A fully refunded UNCLASSIFIED transaction has no remaining consumption
+    // to classify, so it is not actionable and must not remain in Pending.
+    return !effectiveUnclassifiedTokenForTransaction(
+      transactionId: transaction.id,
+      ledger: ledger,
+    ).isZero;
   }).toList(growable: false)
     ..sort((a, b) => b.occurredAt.compareTo(a.occurredAt));
 
@@ -70,6 +108,7 @@ class _PendingQueuePageState extends State<PendingQueuePage> {
     _pending = pendingTransactionsFromCurrentClassification(
       transactions: widget.transactions,
       classifications: widget.classifications,
+      ledger: widget.ledger,
     );
   }
 
@@ -122,6 +161,10 @@ class _PendingQueuePageState extends State<PendingQueuePage> {
                 separatorBuilder: (_, __) => const SizedBox(height: 12),
                 itemBuilder: (context, index) {
                   final transaction = _pending[index];
+                  final remaining = effectiveUnclassifiedTokenForTransaction(
+                    transactionId: transaction.id,
+                    ledger: widget.ledger,
+                  );
 
                   return Card(
                     child: ListTile(
@@ -139,7 +182,7 @@ class _PendingQueuePageState extends State<PendingQueuePage> {
                         ),
                       ),
                       trailing: Text(
-                        DisplayFormatter.token(transaction.tokenAmount),
+                        DisplayFormatter.token(remaining),
                         style: Theme.of(context).textTheme.labelLarge,
                       ),
                       onTap: () => _openDetail(transaction),
@@ -185,8 +228,21 @@ class _PendingDetailPageState extends State<PendingDetailPage> {
   bool _saving = false;
   String? _errorText;
 
+  TokenAmount get _remaining =>
+      effectiveUnclassifiedTokenForTransaction(
+        transactionId: widget.transaction.id,
+        ledger: widget.ledger,
+      );
+
   Future<void> _classify() async {
     final resourceId = _resourceId;
+
+    if (_remaining.isZero) {
+      setState(() {
+        _errorText = '이 거래는 전액 환불되어 분류할 소비가 없습니다.';
+      });
+      return;
+    }
 
     if (resourceId == null) {
       setState(() => _errorText = '분류할 자원을 선택하세요.');
@@ -272,8 +328,12 @@ class _PendingDetailPageState extends State<PendingDetailPage> {
               value: DisplayFormatter.won(transaction.wonAmount),
             ),
             _DetailLine(
-              label: 'TOKEN',
+              label: '원래 TOKEN',
               value: DisplayFormatter.token(transaction.tokenAmount),
+            ),
+            _DetailLine(
+              label: '분류 대상',
+              value: DisplayFormatter.token(_remaining),
             ),
             _DetailLine(
               label: '거래일시',
@@ -316,7 +376,7 @@ class _PendingDetailPageState extends State<PendingDetailPage> {
                   ),
                 );
               }).toList(growable: false),
-              onChanged: _saving
+              onChanged: _saving || _remaining.isZero
                   ? null
                   : (value) {
                       setState(() {
@@ -336,7 +396,7 @@ class _PendingDetailPageState extends State<PendingDetailPage> {
             ],
             const SizedBox(height: 28),
             FilledButton(
-              onPressed: _saving ? null : _classify,
+              onPressed: _saving || _remaining.isZero ? null : _classify,
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 child: Text(_saving ? '처리 중...' : '이 자원으로 분류'),
