@@ -159,69 +159,31 @@ class _TransactionDetailPageState extends State<TransactionDetailPage> {
   }
 
   Future<void> _refund() async {
-    if (_remainingWon <= BigInt.zero) return;
-
-    final controller = TextEditingController(
-      text: _remainingWon.toString(),
-    );
+    if (_remainingWon <= BigInt.zero || _busy) return;
 
     final amount = await showDialog<BigInt>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('환불 처리'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('남은 환불 가능 금액: ${DisplayFormatter.won(_remainingWon)}'),
-            const SizedBox(height: 16),
-            TextField(
-              controller: controller,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: '환불 금액(원)',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('취소'),
-          ),
-          TextButton(
-            onPressed: () =>
-                Navigator.of(dialogContext).pop(_remainingWon),
-            child: const Text('전액 환불'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final raw = controller.text.trim().replaceAll(',', '');
-              final parsed = BigInt.tryParse(raw);
-              Navigator.of(dialogContext).pop(parsed);
-            },
-            child: const Text('환불'),
-          ),
-        ],
+      builder: (dialogContext) => _RefundDialog(
+        remainingWon: _remainingWon,
       ),
     );
 
-    controller.dispose();
-    if (amount == null) return;
+    if (!mounted || amount == null) return;
 
+    // UI validation is performed inside _RefundDialog.
+    // Keep this guard as a second boundary before the Core pipeline.
     if (amount <= BigInt.zero || amount > _remainingWon) {
-      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('환불 가능 범위의 금액을 입력하세요.')),
       );
       return;
     }
 
+    final callback = widget.onRefund;
+    if (callback == null) return;
+
     setState(() => _busy = true);
     try {
-      final callback = widget.onRefund;
-      if (callback == null) return;
       await callback(widget.transaction, amount);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -441,6 +403,109 @@ class _TransactionDetailPageState extends State<TransactionDetailPage> {
           ],
         ),
       ),
+    );
+  }
+}
+
+
+class _RefundDialog extends StatefulWidget {
+  final BigInt remainingWon;
+
+  const _RefundDialog({
+    required this.remainingWon,
+  });
+
+  @override
+  State<_RefundDialog> createState() => _RefundDialogState();
+}
+
+class _RefundDialogState extends State<_RefundDialog> {
+  late final TextEditingController _controller;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.remainingWon.toString());
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final raw = _controller.text.trim().replaceAll(',', '');
+    final amount = BigInt.tryParse(raw);
+
+    if (amount == null) {
+      setState(() => _errorText = '환불 금액을 숫자로 입력하세요.');
+      return;
+    }
+    if (amount <= BigInt.zero) {
+      setState(() => _errorText = '환불 금액은 0원보다 커야 합니다.');
+      return;
+    }
+    if (amount > widget.remainingWon) {
+      setState(() {
+        _errorText =
+            '환불 가능 금액 ${DisplayFormatter.won(widget.remainingWon)}을 초과했습니다.';
+      });
+      return;
+    }
+
+    Navigator.of(context).pop(amount);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('환불 처리'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '남은 환불 가능 금액: '
+              '${DisplayFormatter.won(widget.remainingWon)}',
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _submit(),
+              decoration: InputDecoration(
+                labelText: '환불 금액(원)',
+                errorText: _errorText,
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: (_) {
+                if (_errorText != null) {
+                  setState(() => _errorText = null);
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('취소'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(widget.remainingWon),
+          child: const Text('전액 환불'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: const Text('환불'),
+        ),
+      ],
     );
   }
 }
