@@ -22,7 +22,7 @@ TokenAmount effectiveUnclassifiedTokenForTransaction({
   }
 
   if (minor >= BigInt.zero) {
-    return TokenAmount.zero();
+    return TokenAmount.fromMinorUnits(BigInt.zero);
   }
 
   return TokenAmount.fromMinorUnits(-minor);
