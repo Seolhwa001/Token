@@ -33,6 +33,14 @@ class HomePage extends StatelessWidget {
     TokenTransaction transaction,
     String resourceId,
   ) onCreateSuggestedRule;
+  final Future<void> Function(
+    TokenTransaction transaction,
+    BigInt wonAmount,
+  ) onRefundTransaction;
+  final Future<void> Function(
+    TokenTransaction transaction,
+    String resourceId,
+  ) onReclassifyTransaction;
 
   const HomePage({
     super.key,
@@ -46,16 +54,15 @@ class HomePage extends StatelessWidget {
     required this.onCreateTransaction,
     required this.onClassifyPending,
     required this.onCreateSuggestedRule,
+    required this.onRefundTransaction,
+    required this.onReclassifyTransaction,
   });
 
   Future<void> _openCreateResource(BuildContext context) async {
     final creation = await Navigator.of(context).push<ResourceCreation>(
       MaterialPageRoute(builder: (_) => const ResourceCreatePage()),
     );
-
-    if (creation != null) {
-      await onCreateResource(creation);
-    }
+    if (creation != null) await onCreateResource(creation);
   }
 
   Future<void> _openCreateTransaction(BuildContext context) async {
@@ -68,21 +75,21 @@ class HomePage extends StatelessWidget {
         ),
       ),
     );
-
     if (submission == null) return;
 
     await onCreateTransaction(submission);
-
     if (!context.mounted) return;
-
-    final message = submission.userResourceId == null
-        ? '거래를 저장했습니다. 자동분류되지 않으면 분류 대기로 이동합니다.'
-        : '거래가 저장되었습니다.';
 
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        SnackBar(content: Text(message)),
+        SnackBar(
+          content: Text(
+            submission.userResourceId == null
+                ? '거래를 저장했습니다. 자동분류되지 않으면 분류 대기로 이동합니다.'
+                : '거래가 저장되었습니다.',
+          ),
+        ),
       );
   }
 
@@ -109,6 +116,8 @@ class HomePage extends StatelessWidget {
           classifications: classifications,
           ledger: ledger,
           resources: resources,
+          onRefund: onRefundTransaction,
+          onReclassify: onReclassifyTransaction,
         ),
       ),
     );
@@ -117,7 +126,6 @@ class HomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final remaining = activePeriod.remainingDaysOn(DateTime.now());
-
     final pendingCount = pendingTransactionsFromCurrentClassification(
       transactions: transactions,
       classifications: classifications,
@@ -186,9 +194,7 @@ class HomePage extends StatelessWidget {
                       child: ListTile(
                         leading: const Icon(Icons.pending_actions_outlined),
                         title: const Text('분류 대기'),
-                        subtitle: Text(
-                          pendingCount == 0 ? '없음' : '$pendingCount건',
-                        ),
+                        subtitle: Text(pendingCount == 0 ? '없음' : '$pendingCount건'),
                         onTap: () => _openPendingQueue(context),
                       ),
                     ),
