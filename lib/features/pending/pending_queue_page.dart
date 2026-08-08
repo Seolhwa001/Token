@@ -228,11 +228,20 @@ class _PendingDetailPageState extends State<PendingDetailPage> {
   bool _saving = false;
   String? _errorText;
 
-  TokenAmount get _remaining =>
-      effectiveUnclassifiedTokenForTransaction(
-        transactionId: widget.transaction.id,
-        ledger: widget.ledger,
-      );
+  TokenAmount get _remaining {
+    // PendingDetailPage is also used by legacy/widget-test callers that do not
+    // supply Ledger. In that case the transaction's original TOKEN amount is
+    // the classification target. Production Pending Queue supplies Ledger and
+    // therefore uses the effective UNCLASSIFIED remainder after refunds.
+    if (widget.ledger.isEmpty) {
+      return widget.transaction.tokenAmount;
+    }
+
+    return effectiveUnclassifiedTokenForTransaction(
+      transactionId: widget.transaction.id,
+      ledger: widget.ledger,
+    );
+  }
 
   Future<void> _classify() async {
     final resourceId = _resourceId;
