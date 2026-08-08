@@ -64,77 +64,94 @@ class _ResourceCreatePageState extends State<ResourceCreatePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(title: const Text('새 자원')),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('사용할 자원을 만드세요',
-                  style: Theme.of(context).textTheme.headlineSmall),
-              const SizedBox(height: 8),
-              const Text('초기 TOKEN 지급도 Ledger에 기록됩니다. 음수도 허용됩니다.'),
-              const SizedBox(height: 28),
-              TextField(
-                controller: _nameController,
-                decoration: const InputDecoration(
-                  labelText: '자원 이름',
-                  hintText: '예: 식비, 차량비, 여가',
-                  border: OutlineInputBorder(),
-                ),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          children: [
+            Text(
+              '사용할 자원을 만드세요',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 8),
+            const Text('초기 TOKEN 지급도 Ledger에 기록됩니다. 음수도 허용됩니다.'),
+            const SizedBox(height: 28),
+            TextField(
+              controller: _nameController,
+              textInputAction: TextInputAction.next,
+              decoration: const InputDecoration(
+                labelText: '자원 이름',
+                hintText: '예: 식비, 차량비, 여가',
+                border: OutlineInputBorder(),
               ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _amountController,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                decoration: const InputDecoration(
-                  labelText: '초기 TOKEN',
-                  border: OutlineInputBorder(),
-                ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _amountController,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+                signed: true,
               ),
-              const SizedBox(height: 24),
-              Text('색상', style: Theme.of(context).textTheme.titleMedium),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 12,
-                children: _colors.entries.map((entry) {
-                  final selected = entry.key == _selectedColorKey;
-                  return InkWell(
-                    onTap: () => setState(() => _selectedColorKey = entry.key),
-                    borderRadius: BorderRadius.circular(24),
-                    child: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: entry.value,
-                        shape: BoxShape.circle,
-                        border: selected
-                            ? Border.all(color: Theme.of(context).colorScheme.onSurface, width: 3)
-                            : null,
-                      ),
-                      child: selected ? const Icon(Icons.check, color: Colors.white) : null,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _create(),
+              decoration: const InputDecoration(
+                labelText: '초기 TOKEN',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text('색상', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: _colors.entries.map((entry) {
+                final selected = entry.key == _selectedColorKey;
+                return InkWell(
+                  onTap: () => setState(() => _selectedColorKey = entry.key),
+                  borderRadius: BorderRadius.circular(24),
+                  child: Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: entry.value,
+                      shape: BoxShape.circle,
+                      border: selected
+                          ? Border.all(
+                              color: Theme.of(context).colorScheme.onSurface,
+                              width: 3,
+                            )
+                          : null,
                     ),
-                  );
-                }).toList(),
-              ),
-              if (_errorText != null) ...[
-                const SizedBox(height: 20),
-                Text(_errorText!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-              ],
-              const Spacer(),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: _create,
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 14),
-                    child: Text('자원 생성'),
+                    child: selected
+                        ? const Icon(Icons.check, color: Colors.white)
+                        : null,
                   ),
-                ),
+                );
+              }).toList(),
+            ),
+            if (_errorText != null) ...[
+              const SizedBox(height: 20),
+              Text(
+                _errorText!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ],
-          ),
+            const SizedBox(height: 32),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _create,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 14),
+                  child: Text('자원 생성'),
+                ),
+              ),
+            ),
+            SizedBox(height: MediaQuery.viewInsetsOf(context).bottom > 0 ? 12 : 0),
+          ],
         ),
       ),
     );
