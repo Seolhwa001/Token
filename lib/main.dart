@@ -13,6 +13,7 @@ import 'features/migration/pipeline_migration.dart';
 import 'features/period/management_period.dart';
 import 'features/period/period_repository.dart';
 import 'features/period/period_setup_page.dart';
+import 'features/refund/refund_repository.dart';
 import 'features/resource/resource.dart';
 import 'features/resource/resource_creation.dart';
 import 'features/resource/resource_repository.dart';
@@ -41,6 +42,7 @@ class _TokenAppState extends State<TokenApp> {
   final _transactionRepository = TransactionRepository();
   final _classificationRepository = ClassificationRepository();
   final _ruleRepository = RuleRepository();
+  final _refundRepository = RefundRepository();
   final _lifecycleRepository = LifecycleRepository();
 
   final ExchangeRate _exchangeRate = ExchangeRate.fromInt(100);
@@ -59,6 +61,7 @@ class _TokenAppState extends State<TokenApp> {
     lifecycleRepository: _lifecycleRepository,
     ruleEngine: const RuleEngine(),
     ruleRepository: _ruleRepository,
+    refundRepository: _refundRepository,
   );
 
   @override
@@ -69,7 +72,6 @@ class _TokenAppState extends State<TokenApp> {
 
   Future<void> _load() async {
     await PipelineMigration().runIfNeeded();
-
     final period = await _periodRepository.loadActivePeriod();
     final resources = await _resourceRepository.loadAll();
     final ledger = await _ledgerRepository.loadAll();
@@ -77,7 +79,6 @@ class _TokenAppState extends State<TokenApp> {
     final classifications = await _classificationRepository.loadAll();
 
     if (!mounted) return;
-
     setState(() {
       _activePeriod = period;
       _resources = resources;
@@ -88,17 +89,24 @@ class _TokenAppState extends State<TokenApp> {
     });
   }
 
+  Future<void> _refreshAccounting() async {
+    final ledger = await _ledgerRepository.loadAll();
+    final classifications = await _classificationRepository.loadAll();
+    if (!mounted) return;
+    setState(() {
+      _ledger = ledger;
+      _classifications = classifications;
+    });
+  }
+
   Future<void> _createPeriod(ManagementPeriod period) async {
     await _periodRepository.saveActivePeriod(period);
-
     if (!mounted) return;
-
     setState(() => _activePeriod = period);
   }
 
   Future<void> _createResource(ResourceCreation creation) async {
     final resources = await _resourceRepository.add(creation.resource);
-
     if (!creation.initialAmount.isZero) {
       await _ledgerRepository.append(
         LedgerEntry(
@@ -111,30 +119,22 @@ class _TokenAppState extends State<TokenApp> {
         ),
       );
     }
-
     final ledger = await _ledgerRepository.loadAll();
-
     if (!mounted) return;
-
     setState(() {
       _resources = resources;
       _ledger = ledger;
     });
   }
 
-  Future<void> _createTransaction(
-    TransactionSubmission submission,
-  ) async {
+  Future<void> _createTransaction(TransactionSubmission submission) async {
     final result = await _pipeline.submit(
       submission.transaction,
       userResourceId: submission.userResourceId,
     );
-
     final transactions = await _transactionRepository.loadAll();
     final classifications = await _classificationRepository.loadAll();
-
     if (!mounted) return;
-
     setState(() {
       _ledger = result.ledger;
       _transactions = transactions;
@@ -146,19 +146,33 @@ class _TokenAppState extends State<TokenApp> {
     TokenTransaction transaction,
     String resourceId,
   ) async {
-    final ledger = await _pipeline.classifyPending(
+    await _pipeline.classifyPending(
       transaction: transaction,
       resourceId: resourceId,
     );
+    await _refreshAccounting();
+  }
 
-    final classifications = await _classificationRepository.loadAll();
+  Future<void> _refundTransaction(
+    TokenTransaction transaction,
+    BigInt wonAmount,
+  ) async {
+    await _pipeline.refundPartial(
+      transaction: transaction,
+      wonAmount: wonAmount,
+    );
+    await _refreshAccounting();
+  }
 
-    if (!mounted) return;
-
-    setState(() {
-      _ledger = ledger;
-      _classifications = classifications;
-    });
+  Future<void> _reclassifyTransaction(
+    TokenTransaction transaction,
+    String resourceId,
+  ) async {
+    await _pipeline.reclassify(
+      transaction: transaction,
+      newResourceId: resourceId,
+    );
+    await _refreshAccounting();
   }
 
   Future<void> _createSuggestedRule(
@@ -166,20 +180,13 @@ class _TokenAppState extends State<TokenApp> {
     String resourceId,
   ) async {
     final keyword = transaction.merchant.trim();
-
     if (keyword.isEmpty) return;
-
     final allRules = await _ruleRepository.listAllIncludingDeleted();
-
     var maxPriority = 0;
     for (final rule in allRules) {
-      if (rule.priority > maxPriority) {
-        maxPriority = rule.priority;
-      }
+      if (rule.priority > maxPriority) maxPriority = rule.priority;
     }
-
     final now = DateTime.now();
-
     await _ruleRepository.insert(
       ClassificationRule(
         id: '${now.microsecondsSinceEpoch}-suggested-rule',
@@ -198,21 +205,13 @@ class _TokenAppState extends State<TokenApp> {
       debugShowCheckedModeBanner: false,
       title: 'TOKEN',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.teal,
-        ),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
         useMaterial3: true,
       ),
       home: _loading
-          ? const Scaffold(
-              body: Center(
-                child: CircularProgressIndicator(),
-              ),
-            )
+          ? const Scaffold(body: Center(child: CircularProgressIndicator()))
           : _activePeriod == null
-              ? PeriodSetupPage(
-                  onCreate: _createPeriod,
-                )
+              ? PeriodSetupPage(onCreate: _createPeriod)
               : HomePage(
                   activePeriod: _activePeriod!,
                   resources: _resources,
@@ -224,6 +223,8 @@ class _TokenAppState extends State<TokenApp> {
                   onCreateTransaction: _createTransaction,
                   onClassifyPending: _classifyPending,
                   onCreateSuggestedRule: _createSuggestedRule,
+                  onRefundTransaction: _refundTransaction,
+                  onReclassifyTransaction: _reclassifyTransaction,
                 ),
     );
   }
