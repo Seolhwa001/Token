@@ -1,10 +1,13 @@
 import '../../core/token_amount.dart';
+import '../../core/token_converter.dart';
 import '../classification/classification.dart';
 import '../classification/classification_repository.dart';
 import '../classification/rule_engine.dart';
 import '../classification/rule_repository.dart';
 import '../ledger/ledger_entry.dart';
 import '../ledger/ledger_repository.dart';
+import '../refund/refund_record.dart';
+import '../refund/refund_repository.dart';
 import 'lifecycle_event.dart';
 import 'lifecycle_repository.dart';
 import 'transaction.dart';
@@ -27,6 +30,7 @@ class TransactionPipeline {
   final LifecycleRepository lifecycleRepository;
   final RuleEngine ruleEngine;
   final RuleRepository? ruleRepository;
+  final RefundRepository? refundRepository;
 
   const TransactionPipeline({
     required this.transactionRepository,
@@ -35,6 +39,7 @@ class TransactionPipeline {
     required this.lifecycleRepository,
     required this.ruleEngine,
     this.ruleRepository,
+    this.refundRepository,
   });
 
   Future<PipelineResult> submit(
@@ -42,16 +47,11 @@ class TransactionPipeline {
     String? userResourceId,
   }) async {
     await transactionRepository.append(transaction);
-    await _lifecycle(
-      transaction.id,
-      TransactionLifecycleState.newTransaction,
-    );
+    await _lifecycle(transaction.id, TransactionLifecycleState.newTransaction);
 
     final ClassificationResult classification;
-
     if (userResourceId != null) {
       final now = DateTime.now();
-
       classification = ClassificationResult(
         id: '${now.microsecondsSinceEpoch}-user-classification',
         transactionId: transaction.id,
@@ -61,76 +61,38 @@ class TransactionPipeline {
       );
     } else {
       final repository = ruleRepository;
-
-      if (repository == null) {
-        classification = ruleEngine.classify(transaction);
-      } else {
-        final rules = await repository.listEnabled();
-        classification = ruleEngine.classifyWithRules(
-          transaction,
-          rules,
-        );
-      }
+      classification = repository == null
+          ? ruleEngine.classify(transaction)
+          : ruleEngine.classifyWithRules(
+              transaction,
+              await repository.listEnabled(),
+            );
     }
 
     await classificationRepository.append(classification);
 
-    if (!classification.isClassified) {
-      final entry = LedgerEntry(
-        id: '${DateTime.now().microsecondsSinceEpoch}-unclassified',
-        ledgerType: LedgerType.unclassified,
-        amount: -transaction.tokenAmount,
-        type: LedgerEntryType.purchase,
-        description:
-            transaction.merchant.isEmpty ? '미분류 거래' : transaction.merchant,
-        transactionId: transaction.id,
-        createdAt: transaction.occurredAt,
-      );
-
-      final ledger = await ledgerRepository.append(entry);
-
-      await _lifecycle(
-        transaction.id,
-        TransactionLifecycleState.ledgerCreated,
-      );
-      await _lifecycle(
-        transaction.id,
-        TransactionLifecycleState.analyzed,
-      );
-
-      return PipelineResult(
-        classification: classification,
-        ledger: ledger,
-      );
-    }
-
-    await _lifecycle(
-      transaction.id,
-      TransactionLifecycleState.classified,
-    );
-
     final entry = LedgerEntry(
       id: '${DateTime.now().microsecondsSinceEpoch}-purchase',
-      ledgerType: LedgerType.resource,
-      resourceId: classification.resourceId!,
+      ledgerType: classification.isClassified
+          ? LedgerType.resource
+          : LedgerType.unclassified,
+      resourceId: classification.resourceId,
       amount: -transaction.tokenAmount,
       type: LedgerEntryType.purchase,
-      description:
-          transaction.merchant.isEmpty ? '거래' : transaction.merchant,
+      description: transaction.merchant.isEmpty
+          ? (classification.isClassified ? '거래' : '미분류 거래')
+          : transaction.merchant,
       transactionId: transaction.id,
       createdAt: transaction.occurredAt,
     );
 
     final ledger = await ledgerRepository.append(entry);
 
-    await _lifecycle(
-      transaction.id,
-      TransactionLifecycleState.ledgerCreated,
-    );
-    await _lifecycle(
-      transaction.id,
-      TransactionLifecycleState.analyzed,
-    );
+    if (classification.isClassified) {
+      await _lifecycle(transaction.id, TransactionLifecycleState.classified);
+    }
+    await _lifecycle(transaction.id, TransactionLifecycleState.ledgerCreated);
+    await _lifecycle(transaction.id, TransactionLifecycleState.analyzed);
 
     return PipelineResult(
       classification: classification,
@@ -143,21 +105,21 @@ class TransactionPipeline {
     required String resourceId,
   }) async {
     final ledger = await ledgerRepository.loadAll();
-
-    final unclassifiedDebit = _latestEffectiveDebit(
+    final debit = _currentEffectiveDebit(
       transactionId: transaction.id,
       ledger: ledger,
       requiredLedgerType: LedgerType.unclassified,
     );
+    if (debit == null) {
+      throw StateError('UNCLASSIFIED Ledger entry not found for transaction.');
+    }
 
-    if (unclassifiedDebit == null) {
-      throw StateError(
-        'UNCLASSIFIED Ledger entry not found for transaction.',
-      );
+    final remaining = remainingTokenAmount(transaction, ledger);
+    if (remaining.isZero) {
+      throw StateError('Fully refunded transaction cannot be classified.');
     }
 
     final now = DateTime.now();
-
     await classificationRepository.append(
       ClassificationResult(
         id: '${now.microsecondsSinceEpoch}-pending-classification',
@@ -168,81 +130,107 @@ class TransactionPipeline {
       ),
     );
 
-    final unclassifiedReverse = LedgerEntry(
-      id: '${now.microsecondsSinceEpoch}-unclassified-reversal',
-      ledgerType: LedgerType.unclassified,
-      amount: TokenAmount.fromMinorUnits(
-        unclassifiedDebit.amount.minorUnits.abs(),
+    final updated = await ledgerRepository.appendAll([
+      LedgerEntry(
+        id: '${now.microsecondsSinceEpoch}-unclassified-reversal',
+        ledgerType: LedgerType.unclassified,
+        amount: remaining,
+        type: LedgerEntryType.reversal,
+        description: '분류 처리 역분개 · ${debit.description}',
+        transactionId: transaction.id,
+        reversesLedgerEntryId: debit.id,
+        createdAt: now,
       ),
-      type: LedgerEntryType.reversal,
-      description: '분류 처리 역분개 · ${unclassifiedDebit.description}',
-      transactionId: transaction.id,
-      reversesLedgerEntryId: unclassifiedDebit.id,
-      createdAt: now,
-    );
+      LedgerEntry(
+        id: '${now.microsecondsSinceEpoch}-resource-classification',
+        ledgerType: LedgerType.resource,
+        resourceId: resourceId,
+        amount: -remaining,
+        type: LedgerEntryType.reclassification,
+        description: debit.description,
+        transactionId: transaction.id,
+        createdAt: now,
+      ),
+    ]);
 
-    final resourceEntry = LedgerEntry(
-      id: '${now.microsecondsSinceEpoch}-resource-classification',
-      ledgerType: LedgerType.resource,
-      resourceId: resourceId,
-      amount: -transaction.tokenAmount,
-      type: LedgerEntryType.reclassification,
-      description: unclassifiedDebit.description,
-      transactionId: transaction.id,
-      createdAt: now,
-    );
-
-    final updated = await ledgerRepository.appendAll(
-      [unclassifiedReverse, resourceEntry],
-    );
-
-    await _lifecycle(
-      transaction.id,
-      TransactionLifecycleState.classified,
-    );
-    await _lifecycle(
-      transaction.id,
-      TransactionLifecycleState.reclassified,
-    );
-
+    await _lifecycle(transaction.id, TransactionLifecycleState.classified);
+    await _lifecycle(transaction.id, TransactionLifecycleState.reclassified);
     return updated;
   }
 
   Future<List<LedgerEntry>> refund(TokenTransaction transaction) async {
     final ledger = await ledgerRepository.loadAll();
+    final remainingWon = await _remainingWonForValidation(transaction, ledger);
+    if (remainingWon <= BigInt.zero) {
+      throw StateError('Transaction is already fully refunded.');
+    }
+    return refundPartial(
+      transaction: transaction,
+      wonAmount: remainingWon,
+    );
+  }
 
-    final effective = _latestEffectiveDebit(
+  Future<List<LedgerEntry>> refundPartial({
+    required TokenTransaction transaction,
+    required BigInt wonAmount,
+  }) async {
+    if (wonAmount <= BigInt.zero) {
+      throw ArgumentError.value(wonAmount, 'wonAmount', 'Refund must be > 0.');
+    }
+
+    final ledger = await ledgerRepository.loadAll();
+    final remainingWon = await _remainingWonForValidation(transaction, ledger);
+    if (wonAmount > remainingWon) {
+      throw StateError('Refund exceeds remaining effective amount.');
+    }
+
+    final refundToken = wonToToken(
+      won: wonAmount,
+      exchangeRate: transaction.appliedExchangeRate,
+    );
+    final remainingToken = remainingTokenAmount(transaction, ledger);
+    if (refundToken.compareTo(remainingToken) > 0) {
+      throw StateError('Refund TOKEN exceeds remaining effective TOKEN.');
+    }
+
+    final target = _currentEffectiveDebit(
       transactionId: transaction.id,
       ledger: ledger,
     );
-
-    if (effective == null) {
+    if (target == null) {
       throw StateError('Refund target Ledger entry not found.');
     }
 
     final now = DateTime.now();
-
-    final refund = LedgerEntry(
+    final entry = LedgerEntry(
       id: '${now.microsecondsSinceEpoch}-refund',
-      ledgerType: effective.ledgerType,
-      resourceId: effective.resourceId,
-      amount: TokenAmount.fromMinorUnits(
-        effective.amount.minorUnits.abs(),
-      ),
+      ledgerType: target.ledgerType,
+      resourceId: target.resourceId,
+      amount: refundToken,
       type: LedgerEntryType.refund,
-      description: '환불 · ${effective.description}',
+      description: '환불 · ${target.description}',
       transactionId: transaction.id,
-      reversesLedgerEntryId: effective.id,
+      reversesLedgerEntryId: target.id,
       createdAt: now,
     );
 
-    final updated = await ledgerRepository.append(refund);
+    final updated = await ledgerRepository.append(entry);
 
-    await _lifecycle(
-      transaction.id,
-      TransactionLifecycleState.refunded,
-    );
+    final repository = refundRepository;
+    if (repository != null) {
+      await repository.append(
+        RefundRecord(
+          id: '${now.microsecondsSinceEpoch}-refund-record',
+          transactionId: transaction.id,
+          wonAmount: wonAmount,
+          tokenAmount: refundToken,
+          ledgerEntryId: entry.id,
+          createdAt: now,
+        ),
+      );
+    }
 
+    await _lifecycle(transaction.id, TransactionLifecycleState.refunded);
     return updated;
   }
 
@@ -251,12 +239,15 @@ class TransactionPipeline {
     required String newResourceId,
   }) async {
     final ledger = await ledgerRepository.loadAll();
+    final remaining = remainingTokenAmount(transaction, ledger);
+    if (remaining.isZero) {
+      throw StateError('Fully refunded transaction cannot be reclassified.');
+    }
 
-    final effective = _latestEffectiveDebit(
+    final effective = _currentEffectiveDebit(
       transactionId: transaction.id,
       ledger: ledger,
     );
-
     if (effective == null) {
       throw StateError('Reclassification target Ledger entry not found.');
     }
@@ -270,37 +261,13 @@ class TransactionPipeline {
 
     if (effective.ledgerType != LedgerType.resource ||
         effective.resourceId == null) {
-      throw StateError(
-        'SYSTEM Ledger cannot be Resource-reclassified.',
-      );
+      throw StateError('SYSTEM Ledger cannot be Resource-reclassified.');
+    }
+    if (effective.resourceId == newResourceId) {
+      throw StateError('New Resource must differ from current Resource.');
     }
 
     final now = DateTime.now();
-
-    final reversal = LedgerEntry(
-      id: '${now.microsecondsSinceEpoch}-reversal',
-      ledgerType: LedgerType.resource,
-      resourceId: effective.resourceId,
-      amount: TokenAmount.fromMinorUnits(
-        effective.amount.minorUnits.abs(),
-      ),
-      type: LedgerEntryType.reversal,
-      description: '재분류 역분개 · ${effective.description}',
-      transactionId: transaction.id,
-      reversesLedgerEntryId: effective.id,
-      createdAt: now,
-    );
-
-    final replacement = LedgerEntry(
-      id: '${now.microsecondsSinceEpoch}-reclassification',
-      ledgerType: LedgerType.resource,
-      resourceId: newResourceId,
-      amount: -transaction.tokenAmount,
-      type: LedgerEntryType.reclassification,
-      description: effective.description,
-      transactionId: transaction.id,
-      createdAt: now,
-    );
 
     await classificationRepository.append(
       ClassificationResult(
@@ -312,44 +279,118 @@ class TransactionPipeline {
       ),
     );
 
-    final updated = await ledgerRepository.appendAll(
-      [reversal, replacement],
-    );
+    final updated = await ledgerRepository.appendAll([
+      LedgerEntry(
+        id: '${now.microsecondsSinceEpoch}-reversal',
+        ledgerType: LedgerType.resource,
+        resourceId: effective.resourceId,
+        amount: remaining,
+        type: LedgerEntryType.reversal,
+        description: '재분류 역분개 · ${effective.description}',
+        transactionId: transaction.id,
+        reversesLedgerEntryId: effective.id,
+        createdAt: now,
+      ),
+      LedgerEntry(
+        id: '${now.microsecondsSinceEpoch}-reclassification',
+        ledgerType: LedgerType.resource,
+        resourceId: newResourceId,
+        amount: -remaining,
+        type: LedgerEntryType.reclassification,
+        description: effective.description,
+        transactionId: transaction.id,
+        createdAt: now,
+      ),
+    ]);
 
-    await _lifecycle(
-      transaction.id,
-      TransactionLifecycleState.reclassified,
-    );
-
+    await _lifecycle(transaction.id, TransactionLifecycleState.reclassified);
     return updated;
   }
 
-  LedgerEntry? _latestEffectiveDebit({
+
+  Future<BigInt> _remainingWonForValidation(
+    TokenTransaction transaction,
+    List<LedgerEntry> ledger,
+  ) async {
+    final repository = refundRepository;
+    if (repository != null) {
+      final records = await repository.listByTransaction(transaction.id);
+      var refundedWon = BigInt.zero;
+      for (final record in records) {
+        refundedWon += record.wonAmount;
+      }
+      final remaining = transaction.wonAmount - refundedWon;
+      return remaining.isNegative ? BigInt.zero : remaining;
+    }
+
+    return remainingWonAmount(transaction, ledger);
+  }
+
+  BigInt remainingWonAmount(
+    TokenTransaction transaction,
+    List<LedgerEntry> ledger,
+  ) {
+    final refundedMinor = _refundedTokenMinor(transaction.id, ledger);
+    if (refundedMinor <= BigInt.zero) return transaction.wonAmount;
+
+    final refundedWon =
+        (refundedMinor * transaction.appliedExchangeRate.minorWonPerToken) ~/
+            BigInt.from(10000);
+    final remaining = transaction.wonAmount - refundedWon;
+    return remaining.isNegative ? BigInt.zero : remaining;
+  }
+
+  TokenAmount remainingTokenAmount(
+    TokenTransaction transaction,
+    List<LedgerEntry> ledger,
+  ) {
+    final remaining =
+        transaction.tokenAmount.minorUnits - _refundedTokenMinor(transaction.id, ledger);
+    return TokenAmount.fromMinorUnits(
+      remaining.isNegative ? BigInt.zero : remaining,
+    );
+  }
+
+  BigInt _refundedTokenMinor(
+    String transactionId,
+    List<LedgerEntry> ledger,
+  ) {
+    var result = BigInt.zero;
+    for (final entry in ledger) {
+      if (entry.transactionId == transactionId &&
+          entry.type == LedgerEntryType.refund &&
+          !entry.amount.isNegative) {
+        result += entry.amount.minorUnits;
+      }
+    }
+    return result;
+  }
+
+  LedgerEntry? _currentEffectiveDebit({
     required String transactionId,
     required List<LedgerEntry> ledger,
     LedgerType? requiredLedgerType,
   }) {
     final candidates = ledger.where((entry) {
-      if (entry.transactionId != transactionId) return false;
-      if (!entry.amount.isNegative) return false;
-
+      if (entry.transactionId != transactionId || !entry.amount.isNegative) {
+        return false;
+      }
       if (requiredLedgerType != null &&
           entry.ledgerType != requiredLedgerType) {
         return false;
       }
-
       return entry.type == LedgerEntryType.purchase ||
           entry.type == LedgerEntryType.reclassification;
-    }).toList();
+    }).toList(growable: false);
 
     for (final candidate in candidates.reversed) {
-      final reversed = ledger.any(
-        (entry) => entry.reversesLedgerEntryId == candidate.id,
+      final moved = ledger.any(
+        (entry) =>
+            entry.reversesLedgerEntryId == candidate.id &&
+            entry.type == LedgerEntryType.reversal,
       );
-
-      if (!reversed) return candidate;
+      if (!moved) return candidate;
     }
-
     return null;
   }
 
@@ -358,7 +399,6 @@ class TransactionPipeline {
     TransactionLifecycleState state,
   ) {
     final now = DateTime.now();
-
     return lifecycleRepository.append(
       TransactionLifecycleEvent(
         id: '${now.microsecondsSinceEpoch}-${state.name}',
