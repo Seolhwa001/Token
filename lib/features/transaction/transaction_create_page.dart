@@ -20,8 +20,7 @@ class TransactionCreatePage extends StatefulWidget {
   });
 
   @override
-  State<TransactionCreatePage> createState() =>
-      _TransactionCreatePageState();
+  State<TransactionCreatePage> createState() => _TransactionCreatePageState();
 }
 
 class _TransactionCreatePageState extends State<TransactionCreatePage> {
@@ -51,7 +50,6 @@ class _TransactionCreatePageState extends State<TransactionCreatePage> {
 
   void _save() {
     final rawWon = _wonController.text.trim().replaceAll(',', '');
-
     BigInt won;
     try {
       won = BigInt.parse(rawWon);
@@ -66,7 +64,6 @@ class _TransactionCreatePageState extends State<TransactionCreatePage> {
     }
 
     final now = DateTime.now();
-
     Navigator.of(context).pop(
       TransactionSubmission(
         transaction: _provider.create(
@@ -92,15 +89,10 @@ class _TransactionCreatePageState extends State<TransactionCreatePage> {
           padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
           children: [
-            Text(
-              '소비를 기록하세요',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
+            Text('소비를 기록하세요',
+                style: Theme.of(context).textTheme.headlineSmall),
             const SizedBox(height: 8),
-            Text(
-              '현재 환율: '
-              '${widget.exchangeRate.toDisplayString()}원 = 1 TOKEN',
-            ),
+            Text('현재 환율: ${widget.exchangeRate.toDisplayString()}원 = 1 TOKEN'),
             const SizedBox(height: 24),
             TextField(
               controller: _wonController,
@@ -126,9 +118,7 @@ class _TransactionCreatePageState extends State<TransactionCreatePage> {
               initialValue: _classificationSelection,
               decoration: const InputDecoration(
                 labelText: '분류',
-                helperText:
-                    '미분류로 저장하면 전체 소비에는 반영되지만 '
-                    '특정 자원 잔액은 변하지 않습니다.',
+                helperText: '미분류로 저장하면 전체 소비에는 반영되지만 특정 자원 잔액은 변하지 않습니다.',
                 helperMaxLines: 2,
                 border: OutlineInputBorder(),
               ),
@@ -138,16 +128,12 @@ class _TransactionCreatePageState extends State<TransactionCreatePage> {
                   child: Text('미분류로 저장'),
                 ),
                 ...widget.resources.map((resource) {
-                  final balance = _calculator.balanceForResource(
-                    resource.id,
-                    widget.ledger,
-                  );
-
+                  final balance =
+                      _calculator.balanceForResource(resource.id, widget.ledger);
                   return DropdownMenuItem(
                     value: resource.id,
                     child: Text(
-                      '${resource.name} · '
-                      '${balance.toDisplayString()} TOKEN',
+                      '${resource.name} · ${balance.toDisplayString()} TOKEN',
                     ),
                   );
                 }),
@@ -176,9 +162,7 @@ class _TransactionCreatePageState extends State<TransactionCreatePage> {
               const SizedBox(height: 16),
               Text(
                 _errorText!,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.error,
-                ),
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ],
             const SizedBox(height: 32),
@@ -192,6 +176,7 @@ class _TransactionCreatePageState extends State<TransactionCreatePage> {
                 ),
               ),
             ),
+            SizedBox(height: MediaQuery.viewInsetsOf(context).bottom > 0 ? 12 : 0),
           ],
         ),
       ),
