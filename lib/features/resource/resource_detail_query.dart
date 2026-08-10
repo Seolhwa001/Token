@@ -66,7 +66,7 @@ class ResourceDetailQuery {
             entry.ledgerType == LedgerType.resource &&
             entry.resourceId == resourceId) {
           netMinor += entry.amount.minorUnits;
-          if (entry.type == LedgerEntryType.refund) hadRefund = true;
+          if (entry.type == LedgerEntryType.refund) {hadRefund = true;
         }
       }
 
