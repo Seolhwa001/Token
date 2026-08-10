@@ -47,48 +47,71 @@ class ResourceDetailQuery {
 
     for (final entry in ledger) {
       if (entry.ledgerType != LedgerType.resource ||
-          entry.resourceId != resourceId) {continue;
-                                          }
+          entry.resourceId != resourceId) {
+        continue;
+      }
+
       balanceMinor += entry.amount.minorUnits;
+
       if (entry.type == LedgerEntryType.initialGrant ||
           entry.type == LedgerEntryType.migrationOpening) {
         grantedMinor += entry.amount.minorUnits;
       }
     }
 
-    for (final tx in transactions) {
-      final current = _current(tx.id, classifications);
-      if (current?.resourceId != resourceId) continue;
+    for (final transaction in transactions) {
+      final current = _current(
+        transaction.id,
+        classifications,
+      );
+
+      if (current?.resourceId != resourceId) {
+        continue;
+      }
 
       var netMinor = BigInt.zero;
       var hadRefund = false;
+
       for (final entry in ledger) {
-        if (entry.transactionId == tx.id &&
+        if (entry.transactionId == transaction.id &&
             entry.ledgerType == LedgerType.resource &&
             entry.resourceId == resourceId) {
           netMinor += entry.amount.minorUnits;
-          if (entry.type == LedgerEntryType.refund) {hadRefund = true;
+
+          if (entry.type == LedgerEntryType.refund) {
+            hadRefund = true;
+          }
         }
       }
 
-      final effectiveMinor = netMinor.isNegative ? -netMinor : BigInt.zero;
-      final effective = TokenAmount.fromMinorUnits(effectiveMinor);
+      final effectiveMinor =
+          netMinor.isNegative ? -netMinor : BigInt.zero;
+
       consumptionMinor += effectiveMinor;
-      items.add(ResourceTransactionView(
-        transaction: tx,
-        effectiveConsumption: effective,
-        fullyRefunded: effectiveMinor == BigInt.zero,
-        partiallyRefunded: hadRefund && effectiveMinor > BigInt.zero,
-      ));
+
+      items.add(
+        ResourceTransactionView(
+          transaction: transaction,
+          effectiveConsumption:
+              TokenAmount.fromMinorUnits(effectiveMinor),
+          fullyRefunded: effectiveMinor == BigInt.zero,
+          partiallyRefunded:
+              hadRefund && effectiveMinor > BigInt.zero,
+        ),
+      );
     }
 
-    items.sort((a, b) =>
-        b.transaction.occurredAt.compareTo(a.transaction.occurredAt));
+    items.sort(
+      (a, b) => b.transaction.occurredAt.compareTo(
+        a.transaction.occurredAt,
+      ),
+    );
 
     return ResourceDetailSnapshot(
       balance: TokenAmount.fromMinorUnits(balanceMinor),
       granted: TokenAmount.fromMinorUnits(grantedMinor),
-      effectiveConsumption: TokenAmount.fromMinorUnits(consumptionMinor),
+      effectiveConsumption:
+          TokenAmount.fromMinorUnits(consumptionMinor),
       transactions: List.unmodifiable(items),
     );
   }
@@ -98,13 +121,26 @@ class ResourceDetailQuery {
     List<ClassificationResult> classifications,
   ) {
     final history = classifications
-        .where((c) => c.transactionId == transactionId)
+        .where(
+          (classification) =>
+              classification.transactionId == transactionId,
+        )
         .toList();
-    if (history.isEmpty) return null;
+
+    if (history.isEmpty) {
+      return null;
+    }
+
     history.sort((a, b) {
-      final t = a.createdAt.compareTo(b.createdAt);
-      return t != 0 ? t : a.id.compareTo(b.id);
+      final byTime = a.createdAt.compareTo(b.createdAt);
+
+      if (byTime != 0) {
+        return byTime;
+      }
+
+      return a.id.compareTo(b.id);
     });
+
     return history.last;
   }
 }
