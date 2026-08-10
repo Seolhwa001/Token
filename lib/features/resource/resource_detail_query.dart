@@ -47,7 +47,8 @@ class ResourceDetailQuery {
 
     for (final entry in ledger) {
       if (entry.ledgerType != LedgerType.resource ||
-          entry.resourceId != resourceId) continue;
+          entry.resourceId != resourceId) {continue;
+                                          }
       balanceMinor += entry.amount.minorUnits;
       if (entry.type == LedgerEntryType.initialGrant ||
           entry.type == LedgerEntryType.migrationOpening) {
