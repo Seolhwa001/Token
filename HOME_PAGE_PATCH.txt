@@ -1,0 +1,35 @@
+Apply these exact edits to lib/features/home/home_page.dart:
+
+1) Add import:
+import '../resource/resource_detail_page.dart';
+
+2) Add method inside HomePage:
+
+  Future<void> _openResourceDetail(
+    BuildContext context,
+    Resource resource,
+  ) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ResourceDetailPage(
+          resource: resource,
+          resources: resources,
+          transactions: transactions,
+          classifications: classifications,
+          ledger: ledger,
+          onRefund: onRefundTransaction,
+          onReclassify: onReclassifyTransaction,
+        ),
+      ),
+    );
+  }
+
+3) Replace ResourceCard creation with:
+
+ResourceCard(
+  resource: resources[index],
+  ledger: ledger,
+  onTap: () => _openResourceDetail(context, resources[index]),
+)
+
+Do not otherwise change HomePage.
